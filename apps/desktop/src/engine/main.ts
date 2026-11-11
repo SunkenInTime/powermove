@@ -70,6 +70,7 @@ export async function startEngine(options: EngineOptions): Promise<{ close(): vo
   };
   const stub = bridgeStub(agentTools);
   (window as unknown as { powermove: unknown }).powermove = stub;
+  (globalThis as unknown as { powermove: unknown }).powermove = stub;
 
   const PM = ((window as unknown as { PM?: Record<string, any> }).PM = {});
   const [diag, util, kernel, uiState, memory, fonts, easing, model, selection, anim, history, library, projects, editing, capabilities, workspace, harness] = await Promise.all([

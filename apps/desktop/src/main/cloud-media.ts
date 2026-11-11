@@ -4,10 +4,9 @@ import { open, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BrowserWindow, dialog, type IpcMain, type IpcMainInvokeEvent } from 'electron';
-import { cloudFileState } from '@powermove/macos-haptics';
 import { IPC, type CloudFileState } from '../shared/ipc';
 import { isRendererUnavailable } from './renderer-recovery';
-import { inspectFileCloudState } from './file-cloud-state';
+import { inspectFileCloudState, nativeCloudFileState } from './file-cloud-state';
 import { readWithRetry } from './read-retry';
 
 const DOWNLOAD_TIMEOUT = 5 * 60_000;
@@ -57,7 +56,7 @@ export async function materializeFile(source: string, signal?: AbortSignal): Pro
 export class CloudMediaService {
   private downloads = new Map<string, Promise<void>>();
   constructor(
-    private inspect: typeof cloudFileState = cloudFileState,
+    private inspect: typeof nativeCloudFileState = nativeCloudFileState,
     private materialize: (source: string, signal?: AbortSignal) => Promise<void> = materializeFile,
   ) {}
   async status(source: string): Promise<CloudFileState> { return inspectFileCloudState(source, this.inspect); }

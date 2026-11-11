@@ -1,8 +1,8 @@
 import type { CloudFileState } from '../shared/ipc';
 
-async function nativeState(file: string): Promise<CloudFileState> {
+export async function nativeCloudFileState(file: string, download = false): Promise<CloudFileState> {
   if (process.platform !== 'darwin') return 'unknown';
-  try { return await (await import('@powermove/macos-haptics')).cloudFileState(file); }
+  try { return await (await import('@powermove/macos-haptics')).cloudFileState(file, download); }
   catch (error: any) {
     // Standalone Node hosts may not ship the desktop addon.
     if (error.code === 'MODULE_NOT_FOUND' || error.code === 'ERR_MODULE_NOT_FOUND') return 'unknown';
@@ -11,7 +11,7 @@ async function nativeState(file: string): Promise<CloudFileState> {
 }
 
 /** Metadata only: never open a placeholder's data fork on the main thread. */
-export async function inspectFileCloudState(file: string, inspect = nativeState, timeoutMs = 10_000): Promise<CloudFileState> {
+export async function inspectFileCloudState(file: string, inspect: (file: string) => Promise<CloudFileState> = nativeCloudFileState, timeoutMs = 10_000): Promise<CloudFileState> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([inspect(file), new Promise<never>((_, reject) => {
