@@ -271,3 +271,93 @@ it('keeps loading visible until source recovery finishes and discards recovery a
   expect(media.releaseCloudSource).toHaveBeenCalledWith('local');
   expect(put).not.toHaveBeenCalled();
 });
+
+/* A full document replacement (a host join or reconnect answer) arrives while
+   a restore is still reading. The restore for the new document keeps what the
+   old one already published; the old one, finishing late, must not take it back. */
+function overlappingRestore() {
+  const { PM } = posterRegistry();
+  PM.proj.assets = {
+    a: { id: 'a', name: 'a.png', kind: 'image' },
+    b: { id: 'b', name: 'b.png', kind: 'image' },
+    c: { id: 'c', name: 'c.png', kind: 'image' },
+    held: { id: 'held', name: 'held.png', kind: 'image' },
+  };
+  const gates: Array<() => void> = [];
+  const hold = () => new Promise<void>(resolve => { gates.push(resolve); });
+  let heldReads = 0;
+  const readsToHold = { count: 1 };
+  PM.MediaStore.get = vi.fn(async (meta: any) => {
+    if (typeof meta !== 'object') return null;
+    if (meta.id === 'held' && heldReads++ < readsToHold.count) await hold();
+    return imageFile(meta.name);
+  });
+  const replace = () => { PM.proj = JSON.parse(JSON.stringify(PM.proj)); return PM.proj; };
+  const live = (id: string) => {
+    const asset = PM.assets.get(id);
+    return asset && !vi.mocked(asset.el.close).mock.calls.length ? asset : undefined;
+  };
+  return { PM, gates, readsToHold, replace, live };
+}
+
+it('keeps media a newer restore adopted when the older restore finishes last', async () => {
+  const { PM, gates, replace, live } = overlappingRestore();
+  const older = PM.assets.restoreProject(PM.proj);
+  await vi.waitFor(() => expect(['a', 'b', 'c'].every(id => PM.assets.get(id))).toBe(true));
+  const published = ['a', 'b', 'c'].map(id => PM.assets.get(id));
+
+  const newer = await PM.assets.restoreProject(replace());
+  expect(newer.stale).toBeFalsy();
+  expect(newer.missing).toEqual([]);
+  gates[0]!();
+  expect(await older).toMatchObject({ stale: true });
+
+  expect(['a', 'b', 'c'].map(id => PM.assets.get(id))).toEqual(published);
+  for (const id of ['a', 'b', 'c', 'held']) expect(live(id)).toBeDefined();
+  PM.assets.clear();
+});
+
+it('keeps adopted media when the older restore finishes first', async () => {
+  const { PM, gates, readsToHold, replace, live } = overlappingRestore();
+  readsToHold.count = 2;
+  const older = PM.assets.restoreProject(PM.proj);
+  await vi.waitFor(() => expect(['a', 'b', 'c'].every(id => PM.assets.get(id))).toBe(true));
+  const newer = PM.assets.restoreProject(replace());
+  await vi.waitFor(() => expect(gates).toHaveLength(2));
+  gates[0]!();
+  expect(await older).toMatchObject({ stale: true });
+  for (const id of ['a', 'b', 'c']) expect(live(id)).toBeDefined();
+  gates[1]!();
+  expect((await newer).missing).toEqual([]);
+  for (const id of ['a', 'b', 'c', 'held']) expect(live(id)).toBeDefined();
+  PM.assets.clear();
+});
+
+it('keeps adopted media across three overlapping restores', async () => {
+  const { PM, gates, readsToHold, replace, live } = overlappingRestore();
+  readsToHold.count = 2;
+  const first = PM.assets.restoreProject(PM.proj);
+  await vi.waitFor(() => expect(['a', 'b', 'c'].every(id => PM.assets.get(id))).toBe(true));
+  const second = PM.assets.restoreProject(replace());
+  await vi.waitFor(() => expect(gates).toHaveLength(2));
+  const third = await PM.assets.restoreProject(replace());
+  expect(third.missing).toEqual([]);
+  gates[1]!();
+  gates[0]!();
+  expect(await second).toMatchObject({ stale: true });
+  expect(await first).toMatchObject({ stale: true });
+  for (const id of ['a', 'b', 'c', 'held']) expect(live(id)).toBeDefined();
+  PM.assets.clear();
+});
+
+it('still takes back and disposes media no newer restore adopted', async () => {
+  const { PM, gates, replace } = overlappingRestore();
+  const older = PM.assets.restoreProject(PM.proj);
+  await vi.waitFor(() => expect(['a', 'b', 'c'].every(id => PM.assets.get(id))).toBe(true));
+  const published = ['a', 'b', 'c'].map(id => PM.assets.get(id));
+  replace();
+  gates[0]!();
+  expect(await older).toMatchObject({ stale: true });
+  for (const id of ['a', 'b', 'c']) expect(PM.assets.get(id)).toBeUndefined();
+  for (const asset of published) expect(asset.el.close).toHaveBeenCalled();
+});

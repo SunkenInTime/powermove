@@ -47,13 +47,17 @@ export function attachRemoteSync(link: SyncLink, PM: Registry): () => void {
   const snapshot = (): string => { try { return JSON.stringify(PM.proj ?? null); } catch { return ''; } };
 
   const applyRemote = (doc: unknown, selection: unknown): void => {
+    const before = PM.proj;
     applying = true;
     try { PM.replaceProject(doc, { selection }); } finally { applying = false; }
     synced = snapshot();
     // Assets another device imported are new to this tab: load them the way a
-    // project open would, from the host's media store.
+    // project open would, from the host's media store. A whole new document
+    // also needs the pass when everything looks loaded: a restore still
+    // running for the old one goes stale, and only a pass for the new one
+    // adopts what it already published.
     const assets = Object.values(PM.proj?.assets ?? {});
-    if (PM.assets && PM.restoreProjectAssets && assets.some((asset) => !PM.assets!.get(asset.id))) {
+    if (PM.assets && PM.restoreProjectAssets && (PM.proj !== before || assets.some((asset) => !PM.assets!.get(asset.id)))) {
       void PM.restoreProjectAssets(PM.proj, false).catch((error) => console.warn('[remote-sync] asset restore failed', error));
     }
   };
