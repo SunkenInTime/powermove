@@ -33,7 +33,7 @@ import { parseSvg,svgImportRepair } from '../core/svg-import';
 import { isStreamedMedia } from '../../host/streamed-media';
 import { forgetVideo, trackVideo } from '../core/video-residency';
 import { inspectorService, viewerService } from '../core/services';
-import { capturePoster } from '../core/poster';
+import { capturePoster, hasPoster } from '../core/poster';
 import { bridge as hostBridge } from '../../kernel/bridge';
 
 const posterUrls = new Map<string, string>();
@@ -1749,7 +1749,9 @@ PM.assets = {
       let posterBlob: any = null;
       let cacheError: unknown;
       try {
-        const posterKey = meta.storageKey
+        // Asking for a poster that cannot exist costs a full retry cycle
+        // against a remote host before the asset is usable.
+        const posterKey = meta.storageKey && hasPoster(meta.kind)
           ? PM.MediaImport.posterKeyFor(meta.storageKey)
           : null;
         // Footage plays from its library file; reading it into a Blob kept a
