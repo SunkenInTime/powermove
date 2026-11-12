@@ -16,7 +16,7 @@ import { MEDIA_PATH_IPC, type MediaPathResult } from '../../../shared/media-tool
 import type { StoreResult } from '../../../shared/store-ipc';
 import { WEB, WEB_UPLOAD_CHUNK_BYTES, type WebHello } from '../../../shared/wire';
 import { Connection } from '../../../shared/link';
-import { attachRemoteMedia } from './remote-media';
+import { attachRemoteMedia, readHostFile, releaseHostFile } from './remote-media';
 import { ReconnectingLink, isDisconnectError } from '../../../shared/reconnect';
 import { bridge as capturedBridge, provideBridge } from '../kernel/bridge';
 
@@ -353,6 +353,9 @@ export function createBridge(link: ReconnectingLink, hello: WebHello, storeSnaps
       // source paths and cloud placeholders belong to the desktop that saved them.
       cloudStatus: async () => ({}),
       openLocalSource: async () => null,
+      // Agents' imports by path read the host's disk, not this machine's.
+      readHostFile: (path, maxBytes) => readHostFile(link, path, maxBytes),
+      releaseHostFile: (file) => releaseHostFile(link, file),
       cloudPrompt: async () => ({ download: false, automatic: false }),
       downloadCloudSource: async () => { throw new Error('Download cloud media in the desktop app, then save the project.'); },
       readCloudSource: async () => { throw new Error('Native media sources are unavailable in the browser.'); },

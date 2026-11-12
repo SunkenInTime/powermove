@@ -157,6 +157,9 @@ export const WEB = {
   /** Content-addressed media on the host, so a second device can pull an asset it never imported. */
   mediaCommit: 'web:media-commit',
   mediaHas: 'web:media-has',
+  /** Stage a file on the host's disk for import by path, and drop it if it was not committed. */
+  mediaImportPath: 'web:media-import-path',
+  mediaImportRelease: 'web:media-import-release',
   /** Fonts on the host: the picker's union, and faces a browser sends up when the host lacks a family. */
   fontsList: 'web:fonts-list',
   fontsHas: 'web:fonts-has',

@@ -24,6 +24,41 @@ const storageKey = (value: unknown): string | null => {
   return typeof value === 'string' ? value : null;
 };
 
+/** Files read from a copy the host staged (see server/host-import.ts): the copy's host path and id. */
+const hostCopies = new WeakMap<Blob, { id: string; path: string }>();
+
+interface StagedImport { id: string; path: string; name: string; size: number; type: string; lastModified: number }
+
+/**
+ * A file on the host's own disk, as a File the normal importer can take. The
+ * host stages a copy; the bytes come down over HTTP like any host media, and
+ * when the importer stores them the copy is filed under its key instead of
+ * being uploaded back. Release it with releaseHostFile once the import is over.
+ */
+export async function readHostFile(link: MediaLink, path: string, maxBytes?: number): Promise<File> {
+  const staged = await link.invoke<StagedImport>(WEB.mediaImportPath, { path, ...(Number.isFinite(maxBytes) ? { maxBytes } : {}) });
+  try {
+    const response = await fetch(`/__powermove/media-import?id=${encodeURIComponent(staged.id)}`, { credentials: 'same-origin' });
+    if (!response.ok) throw new HostMediaError(`Host error ${response.status} while reading ${staged.name}`, response.status);
+    const blob = await response.blob();
+    if (blob.size !== staged.size) throw new Error(`The host sent ${blob.size} of ${staged.size} bytes of ${staged.name}`);
+    const file = new File([blob], staged.name, { type: staged.type, lastModified: staged.lastModified });
+    hostCopies.set(file, { id: staged.id, path: staged.path });
+    return file;
+  } catch (error) {
+    await link.invoke(WEB.mediaImportRelease, staged.id).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** Drops the host's staged copy if the import did not file it. */
+export async function releaseHostFile(link: MediaLink, file: Blob): Promise<void> {
+  const copy = hostCopies.get(file);
+  if (!copy) return;
+  hostCopies.delete(file);
+  await link.invoke(WEB.mediaImportRelease, copy.id);
+}
+
 async function uploadBlob(link: MediaLink, key: string, blob: Blob): Promise<void> {
   const id = await link.invoke<string>(WEB.uploadBegin, { name: 'blob', size: blob.size, kind: 'blob' });
   try {
@@ -67,8 +102,13 @@ export function attachRemoteMedia(link: MediaLink, store: MediaStore, onChange: 
     if (mirrored.has(key)) return Promise.resolve();
     const existing = inflight.get(key);
     if (existing) return existing;
+    const copy = hostCopies.get(blob);
+    const send = () => copy
+      // The host already has these bytes; a failed move (the copy was released) falls back to sending them.
+      ? link.invoke(WEB.mediaCommit, { key, path: copy.path, type: blob.type || 'application/octet-stream' }).then(() => undefined, () => uploadBlob(link, key, blob))
+      : uploadBlob(link, key, blob);
     const job = link.invoke<string[]>(WEB.mediaHas, [key])
-      .then((present) => (present.includes(key) ? undefined : uploadBlob(link, key, blob)))
+      .then((present) => (present.includes(key) ? undefined : send()))
       .then(() => { mirrored.add(key); })
       .catch((error) => { console.warn('[remote-media] mirror failed', key, error); })
       .finally(() => { inflight.delete(key); });
@@ -119,7 +159,11 @@ export function attachRemoteMedia(link: MediaLink, store: MediaStore, onChange: 
     async put(id, blob, meta = {}) {
       const stored = await store.put(id, blob, meta);
       const key = storageKey({ storageKey: meta['storageKey'], id });
-      if (stored && key && blob.size > 0) void mirror(key, blob);
+      if (stored && key && blob.size > 0) {
+        const job = mirror(key, blob);
+        // Filing a staged host copy is a move on the host, so the import can wait for it.
+        if (hostCopies.has(blob)) await job;
+      }
       return stored;
     },
     async get(value) {

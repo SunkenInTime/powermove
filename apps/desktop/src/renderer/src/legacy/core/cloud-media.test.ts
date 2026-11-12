@@ -1,6 +1,6 @@
 import { installBridgeForTests, resetBridgeForTests } from '../../kernel/bridge';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createCloudMedia, cloudSourcePaths, readLocalMediaSource, prepareCloudImport } from './cloud-media';
+import { createCloudMedia, cloudSourcePaths, readImportSource, readLocalMediaSource, releaseImportSource, prepareCloudImport } from './cloud-media';
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); resetBridgeForTests(); });
 function setup(automatic = false) {
@@ -218,4 +218,30 @@ it('keeps local files on the existing path without downloading', async () => {
   cloudSourcePaths.set(local, '/cloud/clip.mp4');
   expect(await prepareCloudImport(local, () => {})).toBe(local);
   expect(media.downloadCloudSource).not.toHaveBeenCalled();
+});
+
+it('reads an agent import from the host disk in a browser tab and from local disk on desktop', async () => {
+  const { media } = setup();
+  const meta = { id: 'agent-import', name: 'clip.mp4', sourcePath: '/home/me/clip.mp4' };
+  // Desktop: no host reader, so the local-source bridge is used exactly as before.
+  const local = await readImportSource(meta, () => true, 512);
+  expect(media.openLocalSource).toHaveBeenCalledWith('/home/me/clip.mp4');
+  expect(await local!.arrayBuffer()).toEqual(new Uint8Array([1, 2, 3, 4, 5]).buffer);
+
+  const staged = new File(['hosted'], 'clip.mp4', { type: 'video/mp4' });
+  const host = { readHostFile: vi.fn(async () => staged), releaseHostFile: vi.fn(async () => undefined) };
+  Object.assign(media, host);
+  media.openLocalSource.mockClear();
+  const file = await readImportSource(meta, () => true, 512);
+  expect(file).toBe(staged);
+  expect(host.readHostFile).toHaveBeenCalledWith('/home/me/clip.mp4', 512);
+  expect(media.openLocalSource).not.toHaveBeenCalled();
+  expect(cloudSourcePaths.get(staged)).toBe('/home/me/clip.mp4');
+  await releaseImportSource(file);
+  expect(host.releaseHostFile).toHaveBeenCalledWith(staged);
+
+  // A run that ended while the host was copying drops the copy at once.
+  host.releaseHostFile.mockClear();
+  await expect(readImportSource(meta, () => false, 512)).resolves.toBeNull();
+  expect(host.releaseHostFile).toHaveBeenCalledWith(staged);
 });

@@ -82,6 +82,24 @@ export async function readLocalMediaSource(meta: CloudAsset, current: () => bool
   return result ? readSourceFile(media, result, meta, current, maxBytes) : null;
 }
 
+/** A file an agent named by path: on the host's disk in a browser tab, otherwise as above.
+ *  Call releaseImportSource when the import is over. */
+export async function readImportSource(meta: CloudAsset, current: () => boolean, maxBytes = Infinity): Promise<File | null> {
+  const media = (hostBridge() as any)?.media as MediaBridge | undefined;
+  const source = meta.sourcePath || meta.path;
+  if (!media?.readHostFile || !source) return readLocalMediaSource(meta, current, maxBytes);
+  const file = await media.readHostFile(source, maxBytes);
+  if (!current()) { await releaseImportSource(file); return null; }
+  // Like a desktop read: the asset records where its original lives.
+  cloudSourcePaths.set(file, source);
+  return file;
+}
+
+export async function releaseImportSource(file: File | null): Promise<void> {
+  const media = (hostBridge() as any)?.media as MediaBridge | undefined;
+  if (file && media?.releaseHostFile) await media.releaseHostFile(file).catch(() => undefined);
+}
+
 export function createCloudMedia(PM: Record<string, any>, recover: (meta: any, file: File, current: () => boolean) => Promise<void>) {
   const statuses = new Map<string, CloudStatus>();
   const pending = new Map<string, Promise<void>>();

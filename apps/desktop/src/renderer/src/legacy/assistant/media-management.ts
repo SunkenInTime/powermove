@@ -1,5 +1,5 @@
 import type { PMRegistry } from '../registry';
-import { readLocalMediaSource } from '../core/cloud-media';
+import { readImportSource, releaseImportSource } from '../core/cloud-media';
 import { createFolder, deleteFolder, folderList, isWithin, moveItems, renameFolder, validFolder } from '../core/asset-folders';
 
 const MAX_FILE_BYTES = 512 * 1024 * 1024;
@@ -73,28 +73,30 @@ export async function importMedia(PM: PMRegistry, args: Record<string, unknown>,
   assertCurrent();
   if (replace && PM.assets.loading?.has?.(assetId)) throw new Error('This media is still loading. Wait before replacing it.');
   if (replace && args.missingOnly === true && PM.assets.get(assetId)) return { status: 'already_available', assetId, persisted: meta.persisted === true };
-  const file = await readLocalMediaSource({ id: assetId || 'agent-import', name: path.split(/[\\/]/).pop()!, sourcePath: path }, () => {
+  const file = await readImportSource({ id: assetId || 'agent-import', name: path.split(/[\\/]/).pop()!, sourcePath: path }, () => {
     try { assertCurrent(); return true; } catch { return false; }
   }, MAX_FILE_BYTES);
-  assertCurrent();
-  if (!file) throw new Error('The source is unavailable locally. Download cloud files first; no media was changed.');
-  const fingerprint = await PM.MediaImport.fingerprint(file);
-  assertCurrent();
-  if (args.expectedFingerprint !== undefined && args.expectedFingerprint !== fingerprint) throw new Error('The chosen file does not match expectedFingerprint; no media was changed.');
-  if (!replace) {
-    const existing = Object.values<any>(project.assets || {}).find(item => item.fingerprint === fingerprint && PM.assets.get(item.id) && item.persisted);
-    if (existing) return { status: 'already_imported', assetId: existing.id, persisted: true };
-  }
-  const result = replace
-    ? await PM.assets.replace(assetId, file, { assertCurrent })
-    : (await PM.assets.add(file, { assertCurrent, requirePersisted: true, newAsset: true })).importResult;
-  const id = result.asset.id;
-  if (!result.persisted || !PM.assets.get(id) || !project.assets?.[id]) throw new Error('Media import was not verified in durable storage and the live registry.');
-  if (!replace && args.folderId) project.assets[id].folder = args.folderId;
-  PM.bus.emit('assets');
-  PM.invalidate?.('all');
-  PM.autosave?.();
-  return { status: replace ? 'replaced' : 'imported', assetId: id, name: project.assets[id].name, persisted: true, fingerprint, revision: revision(PM) };
+  try {
+    assertCurrent();
+    if (!file) throw new Error('The source is unavailable locally. Download cloud files first; no media was changed.');
+    const fingerprint = await PM.MediaImport.fingerprint(file);
+    assertCurrent();
+    if (args.expectedFingerprint !== undefined && args.expectedFingerprint !== fingerprint) throw new Error('The chosen file does not match expectedFingerprint; no media was changed.');
+    if (!replace) {
+      const existing = Object.values<any>(project.assets || {}).find(item => item.fingerprint === fingerprint && PM.assets.get(item.id) && item.persisted);
+      if (existing) return { status: 'already_imported', assetId: existing.id, persisted: true };
+    }
+    const result = replace
+      ? await PM.assets.replace(assetId, file, { assertCurrent })
+      : (await PM.assets.add(file, { assertCurrent, requirePersisted: true, newAsset: true })).importResult;
+    const id = result.asset.id;
+    if (!result.persisted || !PM.assets.get(id) || !project.assets?.[id]) throw new Error('Media import was not verified in durable storage and the live registry.');
+    if (!replace && args.folderId) project.assets[id].folder = args.folderId;
+    PM.bus.emit('assets');
+    PM.invalidate?.('all');
+    PM.autosave?.();
+    return { status: replace ? 'replaced' : 'imported', assetId: id, name: project.assets[id].name, persisted: true, fingerprint, revision: revision(PM) };
+  } finally { await releaseImportSource(file); }
 }
 
 export function manageMedia(PM: PMRegistry, args: Record<string, unknown>) {
