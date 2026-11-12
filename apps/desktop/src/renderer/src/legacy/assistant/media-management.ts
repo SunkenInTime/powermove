@@ -1,8 +1,8 @@
 import type { PMRegistry } from '../registry';
 import { readImportSource, releaseImportSource } from '../core/cloud-media';
+import { AGENT_MEDIA_MAX_BYTES } from '../../../../shared/media-formats';
 import { createFolder, deleteFolder, folderList, isWithin, moveItems, renameFolder, validFolder } from '../core/asset-folders';
 
-const MAX_FILE_BYTES = 512 * 1024 * 1024;
 const revision = (PM: PMRegistry) => Math.max(0, Number(PM.proj?.revision) || 0);
 const name = (value: unknown): string => {
   if (typeof value !== 'string' || !value.trim() || value.length > 160) throw new Error('Provide a name of 1–160 characters.');
@@ -75,7 +75,7 @@ export async function importMedia(PM: PMRegistry, args: Record<string, unknown>,
   if (replace && args.missingOnly === true && PM.assets.get(assetId)) return { status: 'already_available', assetId, persisted: meta.persisted === true };
   const file = await readImportSource({ id: assetId || 'agent-import', name: path.split(/[\\/]/).pop()!, sourcePath: path }, () => {
     try { assertCurrent(); return true; } catch { return false; }
-  }, MAX_FILE_BYTES);
+  }, AGENT_MEDIA_MAX_BYTES);
   try {
     assertCurrent();
     if (!file) throw new Error('The source is unavailable locally. Download cloud files first; no media was changed.');

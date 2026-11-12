@@ -559,7 +559,8 @@ export async function serve(options: ServeOptions): Promise<RunningServer> {
     return true;
   });
   /* media on the host's own disk, imported by path (see host-import.ts) */
-  const hostImports = new HostImports(uploadsRoot.blob, options.importRoots ?? [homedir()], MAX_UPLOAD_BYTES);
+  const hostImports = new HostImports(uploadsRoot.blob, options.importRoots ?? [homedir()]);
+  await hostImports.reclaim();
   ipc.handle(WEB.mediaImportPath, async (event, payload) => {
     const client = trustedClient(event);
     if (!isRecord(payload)) throw new Error('media: expected { path, maxBytes }');

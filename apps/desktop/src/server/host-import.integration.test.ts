@@ -4,7 +4,7 @@
  */
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open as openFile, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -72,7 +72,7 @@ describe('import by host path', () => {
     await writeFile(source, bytes);
 
     const staged = await link.invoke<StagedImport>(WEB.mediaImportPath, { path: source, maxBytes: 512 * 1024 * 1024 });
-    expect(staged).toMatchObject({ name: 'footage.mov', size: bytes.length, type: 'video/quicktime' });
+    expect(staged).toMatchObject({ name: 'footage.mov', size: bytes.length, type: 'video/quicktime', key: `media:${await mediaFingerprint(source)}` });
     expect((await get(`/__powermove/media-import?id=${staged.id}`, false)).status).toBe(401);
     expect((await get(`/__powermove/media-import?id=${staged.id}`)).body.equals(bytes)).toBe(true);
 
@@ -94,6 +94,17 @@ describe('import by host path', () => {
 
   it('refuses a path outside the import roots', async () => {
     await expect(link.invoke(WEB.mediaImportPath, { path: path.join(dir, 'profile', 'serve-token') })).rejects.toThrow(`only imports files inside ${media}`);
+  });
+
+  it('holds a raw request to the import limit, whatever the client asks for', async () => {
+    const big = path.join(media, 'big.mp4');
+    const handle = await openFile(big, 'w');
+    await handle.truncate(513 * 1024 * 1024);
+    await handle.close();
+    for (const payload of [{ path: big }, { path: big, maxBytes: 4 * 1024 * 1024 * 1024 }, { path: big, maxBytes: 'lots' }]) {
+      await expect(link.invoke(WEB.mediaImportPath, payload)).rejects.toThrow('limited to 512 MiB');
+    }
+    await rm(big);
   });
 
   it('drops an uncommitted copy on release', async () => {

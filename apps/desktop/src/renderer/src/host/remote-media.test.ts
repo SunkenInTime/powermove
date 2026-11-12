@@ -108,12 +108,14 @@ describe('remote media get', () => {
 });
 
 /** A host that has staged footage.mp4 and has nothing under any key yet. */
-function stagingHost() {
+function stagingHost(...failures: string[]) {
+  const failing = new Set(failures);
   const calls: Array<[string, unknown]> = [];
   const host: MediaLink = {
     invoke: vi.fn(async (channel: string, payload?: unknown) => {
       calls.push([channel, payload]);
-      if (channel === WEB.mediaImportPath) return { id: 'stage-1', path: '/host/Remote Uploads/stage-1/footage.mp4', name: 'footage.mp4', size: 3, type: 'video/mp4', lastModified: 5 } as never;
+      if (channel === WEB.mediaImportPath) return { id: 'stage-1', path: '/host/Remote Uploads/stage-1/footage.mp4', name: 'footage.mp4', size: 3, type: 'video/mp4', lastModified: 5, key: KEY } as never;
+      if (failing.has(channel)) throw new Error(`${channel} failed: disk full`);
       if (channel === WEB.mediaHas) return [] as never;
       if (channel === WEB.uploadBegin) return 'upload-1' as never;
       if (channel === WEB.uploadFinish) return '/host/Remote Uploads/upload-1/blob' as never;
@@ -150,6 +152,35 @@ describe('import by host path', () => {
     await vi.waitFor(() => expect(channels()).toContain(WEB.mediaCommit));
 
     expect(channels()).toEqual([WEB.mediaImportPath, WEB.mediaHas, WEB.uploadBegin, WEB.uploadChunk, WEB.uploadFinish, WEB.mediaCommit]);
+  });
+
+  it('fails the store when the host keeps neither the staged copy nor an upload', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    respond(200);
+    const { host } = stagingHost(WEB.mediaCommit, WEB.uploadChunk);
+    const file = await readHostFile(host, '/home/me/footage.mp4');
+
+    await expect(attachRemoteMedia(host, emptyCache()).put(KEY, file, { storageKey: KEY }))
+      .rejects.toThrow('The host could not store footage.mp4');
+  });
+
+  it('fails the store when the importer saved a converted file the host did not get', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    respond(200);
+    const { host } = stagingHost(WEB.uploadChunk);
+    await readHostFile(host, '/home/me/footage.mp4');
+    const proxy = new Blob(['webm'], { type: 'video/webm' });
+
+    await expect(attachRemoteMedia(host, emptyCache()).put(KEY, proxy, { storageKey: KEY }))
+      .rejects.toThrow('The host could not store footage.mp4');
+  });
+
+  it('keeps ordinary imports in the background, as before', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { host } = stagingHost(WEB.uploadChunk);
+    const dropped = new Blob(['png'], { type: 'image/png' });
+
+    await expect(attachRemoteMedia(host, emptyCache()).put('media:v2:3:dropped', dropped, { storageKey: 'media:v2:3:dropped' })).resolves.toBe(true);
   });
 
   it('releases the staged copy once, and when the read fails', async () => {
