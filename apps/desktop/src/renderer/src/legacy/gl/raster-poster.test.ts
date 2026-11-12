@@ -88,6 +88,24 @@ describe('raster media posters', () => {
     expect(window.URL.revokeObjectURL).toHaveBeenCalledWith('blob:test-1');
   });
 
+  it('looks up posters for images and videos but never for audio', async () => {
+    const { PM, posterBlob } = posterRegistry();
+    PM.proj.assets = {
+      photo: { id: 'photo', name: 'photo.png', kind: 'image', storageKey: 'media:photo', poster: true },
+      clip: { id: 'clip', name: 'clip.mp4', kind: 'video', storageKey: 'media:clip', poster: true },
+      song: { id: 'song', name: 'song.mp3', kind: 'audio', storageKey: 'media:song' },
+    };
+    PM.MediaStore.get = vi.fn(async (value: any) => typeof value === 'string' ? posterBlob : null);
+
+    await PM.assets.restoreProject(PM.proj);
+
+    const posterReads = vi.mocked(PM.MediaStore.get).mock.calls.map(([key]: any[]) => key).filter((key: unknown) => typeof key === 'string');
+    expect(posterReads.sort()).toEqual(['media:clip:poster', 'media:photo:poster']);
+    expect(PM.assets.poster('photo')).not.toBe('');
+    expect(PM.assets.poster('clip')).not.toBe('');
+    PM.assets.clear();
+  });
+
   it('repairs missing poster metadata when the stored poster exists', async () => {
     const { PM, checkpoint, posterBlob } = posterRegistry();
     const meta: any = {
