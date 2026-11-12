@@ -39,6 +39,17 @@ async function uploadBlob(link: MediaLink, key: string, blob: Blob): Promise<voi
   }
 }
 
+/**
+ * The host could not be asked for media, as opposed to not having it.
+ * `status` is the HTTP status, or 0 when no response arrived.
+ */
+export class HostMediaError extends Error {
+  constructor(message: string, readonly status: number, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'HostMediaError';
+  }
+}
+
 /** Wraps PM.MediaStore so puts reach the host and misses are filled from it. */
 export interface RemoteMediaStore extends MediaStore {
   /** Sends up anything this browser has under these keys that the host lacks. */
@@ -65,12 +76,24 @@ export function attachRemoteMedia(link: MediaLink, store: MediaStore, onChange: 
     return job;
   };
 
-  // Another device may still be uploading what this one is asking for.
+  // Another device may still be uploading what this one is asking for, so a
+  // 404 is retried before it means the host does not have the bytes. Any other
+  // failure throws: the restore records why, instead of calling the file missing.
   const fetchFromHost = async (key: string, attempts = 4): Promise<Blob | null> => {
     for (let attempt = 0; attempt < attempts; attempt++) {
-      const response = await fetch(`/__powermove/media?key=${encodeURIComponent(key)}`, { credentials: 'same-origin' });
-      if (response.ok) return response.blob();
-      if (response.status !== 404) return null;
+      let response: Response;
+      try {
+        response = await fetch(`/__powermove/media?key=${encodeURIComponent(key)}`, { credentials: 'same-origin' });
+        if (response.ok) return await response.blob();
+      } catch (error) {
+        throw new HostMediaError('Host unreachable · reload the page to try again', 0, { cause: error });
+      }
+      if (response.status === 401 || response.status === 403) {
+        throw new HostMediaError('Not signed in to the host · open the editor link again', response.status);
+      }
+      if (response.status !== 404) {
+        throw new HostMediaError(`Host error ${response.status} · reload the page to try again`, response.status);
+      }
       await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
     }
     return null;
@@ -106,7 +129,7 @@ export function attachRemoteMedia(link: MediaLink, store: MediaStore, onChange: 
       if (!key) return null;
       let remote: Blob | null = null;
       fetching.add(key); onChange();
-      try { remote = await fetchFromHost(key); } catch (error) { console.warn('[remote-media] fetch failed', key, error); }
+      try { remote = await fetchFromHost(key); } catch (error) { console.warn('[remote-media] fetch failed', key, error); throw error; }
       finally { fetching.delete(key); onChange(); }
       if (!remote) return null;
       const stored = await store.put(key, remote, value && typeof value === 'object' ? (value as Record<string, unknown>) : { storageKey: key });
