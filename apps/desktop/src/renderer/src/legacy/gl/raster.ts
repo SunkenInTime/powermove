@@ -1734,7 +1734,10 @@ PM.assets = {
     const restored: any[] = [], missing: any[] = [];
     const loading = new Set(metas.map(meta => String(meta.id)));
     PM.assets.loading = loading;
-    PM.bus?.emit?.('assets');
+    // Reading stored media makes it usable without changing the project, so
+    // these notifications must not autosave. Recovering an asset from its
+    // source file rewrites its metadata and is saved like any other change.
+    PM.bus?.emit?.('assets', { runtimeOnly: true });
     const results = await PM.MediaImport.mapBounded(metas, 3, async (meta: any) => {
       const current = () => epoch === assetEpoch && PM.proj === project && project.assets?.[meta.id] === meta;
       if (!current()) return { stale: true };
@@ -1748,6 +1751,7 @@ PM.assets = {
       PM.assets.errors.delete(meta.id);
       let posterBlob: any = null;
       let cacheError: unknown;
+      let recovered = false;
       try {
         const posterKey = meta.storageKey
           ? PM.MediaImport.posterKeyFor(meta.storageKey)
@@ -1781,6 +1785,7 @@ PM.assets = {
         if (!current()) return { stale: true };
         if (file) {
           await recoverSourceAsset(meta, file, current);
+          recovered = true;
           if (!current()) return { stale: true };
           return { asset: PM.assets.get(meta.id), meta, posterBlob };
         }
@@ -1794,7 +1799,7 @@ PM.assets = {
       finally {
         loading.delete(String(meta.id));
         if (epoch === assetEpoch && PM.proj === project) {
-          PM.bus?.emit?.('assets');
+          PM.bus?.emit?.('assets', { runtimeOnly: !recovered });
           PM.invalidate?.('render');
         }
       }

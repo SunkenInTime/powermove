@@ -272,6 +272,61 @@ it('keeps loading visible until source recovery finishes and discards recovery a
   expect(put).not.toHaveBeenCalled();
 });
 
+/* app.ts autosaves on every 'assets' notification that is not runtime-only.
+   Count those, the same way, to see what a restore asks the editor to save. */
+function countSaveRequests(PM: PMRegistry) {
+  const requests = { count: 0 };
+  PM.bus.on('assets', (change: any) => { if (!change?.runtimeOnly) requests.count++; });
+  return requests;
+}
+
+it('restores stored media without asking to save the project', async () => {
+  const { PM, posterBlob } = posterRegistry();
+  PM.proj.assets = {
+    photo: { id: 'photo', name: 'photo.png', kind: 'image', storageKey: 'media:photo', poster: true },
+    other: { id: 'other', name: 'other.png', kind: 'image', storageKey: 'media:other', poster: true },
+  };
+  PM.MediaStore.get = vi.fn(async (value: any) => typeof value === 'object' ? imageFile(value.name) : posterBlob);
+  const before = JSON.stringify(PM.proj);
+  const saves = countSaveRequests(PM);
+
+  const result = await PM.assets.restoreProject(PM.proj);
+
+  expect(result.restored).toHaveLength(2);
+  expect(saves.count).toBe(0);
+  expect(PM.touch).not.toHaveBeenCalled();
+  expect(JSON.stringify(PM.proj)).toBe(before);
+  PM.assets.clear();
+});
+
+it('still saves an edit made while media is restoring', async () => {
+  const { PM } = posterRegistry();
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  PM.proj.assets = { slow: { id: 'slow', name: 'slow.png', kind: 'image', storageKey: 'media:slow', poster: true } };
+  PM.MediaStore.get = vi.fn(async (value: any) => { await pending; return typeof value === 'object' ? imageFile(value.name) : null; });
+  const restore = PM.assets.restoreProject(PM.proj);
+
+  PM.hist.do('Rename project', () => { PM.proj.name = 'Edited while loading'; });
+  expect(PM.autosave).toHaveBeenCalledOnce();
+  release(); await restore;
+
+  expect(PM.assets.get('slow')).toBeDefined();
+  expect(PM.proj.name).toBe('Edited while loading');
+  expect(PM.autosave).toHaveBeenCalledOnce();
+  PM.assets.clear();
+});
+
+it('asks to save when restore recovers media from its source file', async () => {
+  const { PM, meta } = localSourceRegistry();
+  const saves = countSaveRequests(PM);
+  const result = await PM.assets.restoreProject(PM.proj);
+  expect(result.restored).toHaveLength(1);
+  expect(PM.assets.get(meta.id)).toBeDefined();
+  expect(saves.count).toBeGreaterThan(0);
+  PM.assets.clear();
+});
+
 /* A full document replacement (a host join or reconnect answer) arrives while
    a restore is still reading. The restore for the new document keeps what the
    old one already published; the old one, finishing late, must not take it back. */
