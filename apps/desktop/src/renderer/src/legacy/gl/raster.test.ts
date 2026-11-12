@@ -6,6 +6,7 @@ import { makePM } from '../__tests__/make-pm';
 import { install as installMedia } from '../core/media';
 import { install, videoImportFailureMessage, waitForPresentedVideoFrame } from './raster';
 import { restoreProjectFileStream } from '../core/project-file';
+import { attachRemoteMedia } from '../../host/remote-media';
 
 function rasterRegistry(extra: Partial<PMRegistry> = {}): PMRegistry {
   const context2d: any = {
@@ -611,6 +612,51 @@ it('restores OBJ assets beyond 64 MB without marking their geometry missing', as
   await PM.assets.restoreProject(project);
   expect(PM.assets.get('model')?.mesh.triangleCount).toBe(1);
   expect(PM.assets.get('model')?.size).toBe(blob.size);
+});
+
+describe('restoring media from a remote host', () => {
+  const obj = () => new Blob(['v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n'], { type: 'model/obj' });
+
+  async function restoreWith(status: number) {
+    vi.stubGlobal('fetch', vi.fn(async () => status === 200 ? new Response(obj()) : new Response('no', { status })));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const empty = { get: async () => null, put: async () => true };
+    const project = { assets: { model: { id: 'model', name: 'set.obj', kind: 'model', storageKey: 'media:v2:3:abc' } } };
+    const PM = rasterRegistry({
+      proj: project,
+      MediaStore: attachRemoteMedia({ invoke: async () => [] as never }, empty),
+      MediaImport: {
+        mapBounded: async (items: any[], _concurrency: number, fn: (item: any) => Promise<any>) => Promise.all(items.map(fn)),
+        // No poster, so the host is asked only for the media itself.
+        posterKeyFor: () => '',
+      },
+    } as any);
+    const result = await PM.assets.restoreProject(project);
+    return { PM, result };
+  }
+
+  it('records why media is unavailable when the host refuses the session', async () => {
+    const { PM, result } = await restoreWith(401);
+    expect(PM.assets.get('model')).toBeUndefined();
+    expect(result.missing.map((meta: any) => meta.id)).toEqual(['model']);
+    expect(PM.assets.errors.get('model')).toBe('Not signed in to the host · open the editor link again');
+  });
+
+  it('leaves media the host does not have offline, with no error', async () => {
+    vi.useFakeTimers();
+    const restoring = restoreWith(404);
+    await vi.runAllTimersAsync();
+    const { PM, result } = await restoring;
+    expect(result.missing.map((meta: any) => meta.id)).toEqual(['model']);
+    expect(PM.assets.errors.has('model')).toBe(false);
+  });
+
+  it('loads media the host returns', async () => {
+    const { PM, result } = await restoreWith(200);
+    expect(result.missing).toEqual([]);
+    expect(PM.assets.get('model')?.mesh.triangleCount).toBe(1);
+    expect(PM.assets.errors.has('model')).toBe(false);
+  });
 });
 
 describe('responsive media batches', () => {

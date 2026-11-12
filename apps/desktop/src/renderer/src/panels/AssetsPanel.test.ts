@@ -243,6 +243,18 @@ describe('AssetsPanel', () => {
     expect(card.textContent).not.toContain('Missing ·');
   });
 
+  it('says media the host refused is unavailable and how to get it back, not that it is missing', () => {
+    const { PM } = setup([VIDEO], { offline: ['video-1'] });
+    PM.assets.errors = new Map([['video-1', 'Not signed in to the host · open the editor link again']]);
+    PM.bus.emit('assets');
+    flushSync();
+    const card = rows()[0]!;
+    expect(card.querySelector('.asset-offline')?.textContent).toContain('Media unavailable');
+    expect(card.querySelector('.asset-offline')?.textContent).not.toContain('Media offline');
+    expect(card.querySelector('.asset-missing')?.textContent)
+      .toBe('Could not load · Not signed in to the host · open the editor link again');
+  });
+
   it('offers Locate instead of Add in the context menu for offline media', () => {
     const { PM } = setup([VIDEO], { offline: ['video-1'] });
 
