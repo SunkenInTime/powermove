@@ -43,17 +43,19 @@ function get(pathname: string, signedIn = true): Promise<{ status: number; type:
   });
 }
 
+const options = () => ({
+  host: '127.0.0.1', port: 0, userData: path.join(dir, 'profile'), exportsDir: path.join(dir, 'exports'),
+  rendererDir: path.join(dir, 'renderer'), resourcesDir: path.join(dir, 'resources'), appPath: dir,
+  version: '0.0.0-test', codexBinary: null, claudeBinary: null, engineScript: null, installKind: 'source' as const, insecure: true,
+  importRoots: [media], log: () => undefined
+});
+
 beforeAll(async () => {
   process.env['POWERMOVE_FONTCONFIG'] = '0';
   dir = await mkdtemp(path.join(tmpdir(), 'pm-host-import-it-'));
   media = path.join(dir, 'media');
   await mkdir(media);
-  server = await serve({
-    host: '127.0.0.1', port: 0, userData: path.join(dir, 'profile'), exportsDir: path.join(dir, 'exports'),
-    rendererDir: path.join(dir, 'renderer'), resourcesDir: path.join(dir, 'resources'), appPath: dir,
-    version: '0.0.0-test', codexBinary: null, claudeBinary: null, engineScript: null, installKind: 'source', insecure: true,
-    importRoots: [media], log: () => undefined
-  });
+  server = await serve(options());
   link = new Connection(await open());
 }, 30_000);
 
@@ -89,6 +91,15 @@ describe('import by host path', () => {
     const served = await get(`/__powermove/media?key=${encodeURIComponent(key)}`);
     expect(served.type).toBe('video/quicktime');
     expect(served.body.equals(bytes)).toBe(true);
+    await link.invoke(WEB.mediaImportRelease, staged.id);
+  });
+
+  it('keeps a running host\'s staged import when a second host starts on the same profile', async () => {
+    await writeFile(path.join(media, 'pending.png'), 'png bytes');
+    const staged = await link.invoke<StagedImport>(WEB.mediaImportPath, { path: path.join(media, 'pending.png') });
+    const port = Number(new URL(server.url).port);
+    await expect(serve({ ...options(), port })).rejects.toThrow('EADDRINUSE');
+    await expect(readFile(staged.path, 'utf8')).resolves.toBe('png bytes');
     await link.invoke(WEB.mediaImportRelease, staged.id);
   });
 

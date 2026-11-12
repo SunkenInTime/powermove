@@ -1346,8 +1346,9 @@ function checkpointAssetMetadata(project: any) {
      journal cannot replay it. Force the smallest full project checkpoint. */
   try { PM.Projects?.put?.(project); } catch (error) { }
 }
-/** Import and replacement share all reading, decoding, conversion, and storage. */
-async function prepareImportedAsset(file: any, { id, assertCurrentProject, resolved: settled, onStage }: any) {
+/** Import and replacement share all reading, decoding, conversion, and storage.
+    `hostDeadline` (epoch ms) asks a browser host to hold the stored bytes by then (see host/remote-media.ts). */
+async function prepareImportedAsset(file: any, { id, assertCurrentProject, resolved: settled, onStage, hostDeadline }: any) {
   assertCurrentProject();
   await yieldMediaWork();
   assertCurrentProject();
@@ -1382,6 +1383,7 @@ async function prepareImportedAsset(file: any, { id, assertCurrentProject, resol
   const persist = (blob: any) => Promise.resolve().then(() => {
     assertCurrentProject();
     return PM.MediaStore.put(storageKey, blob, { storageKey, fingerprint, type: blob.type || file.type,
+      ...(hostDeadline ? { hostDeadline } : {}),
       // Preserve links only for unchanged user-selected source files.
       ...(blob === file && sourcePath && !file.__powermoveArtifact ? { sourcePath } : {}) });
   }).then(value => ({ status: 'fulfilled', value }), reason => ({ status: 'rejected', reason }));
@@ -1404,7 +1406,7 @@ async function prepareImportedAsset(file: any, { id, assertCurrentProject, resol
   const persisted = persistedResult.value;
   return { prepared, kind, fingerprint, storageKey, sourcePath, persisted };
 }
-async function ingestAsset(file: any, { silent = false, layerDefinition, onStage, assertCurrent, requirePersisted = false, newAsset = false }: any = {}) {
+async function ingestAsset(file: any, { silent = false, layerDefinition, onStage, assertCurrent, requirePersisted = false, newAsset = false, hostDeadline }: any = {}) {
   const targetProject = PM.proj;
   const targetEpoch = assetEpoch;
   const assertCurrentProject = () => {
@@ -1418,7 +1420,7 @@ async function ingestAsset(file: any, { silent = false, layerDefinition, onStage
   file = await prepareCloudImport(file, assertCurrentProject, onStage);
   const provisionalId = PM.uid('a');
   const { prepared, kind, fingerprint, storageKey, sourcePath, persisted } = await prepareImportedAsset(file, {
-    id: provisionalId, assertCurrentProject, onStage,
+    id: provisionalId, assertCurrentProject, onStage, hostDeadline,
   });
   if (requirePersisted && !persisted) {
     disposeAsset(prepared);
@@ -1552,7 +1554,7 @@ PM.assets = {
     }
     return results;
   },
-  async replace(id: any, file: any, { onStage, assertCurrent }: any = {}) {
+  async replace(id: any, file: any, { onStage, assertCurrent, hostDeadline }: any = {}) {
     const targetProject = PM.proj;
     const targetProjectId = targetProject?.id;
     const targetEpoch = assetEpoch;
@@ -1579,7 +1581,7 @@ PM.assets = {
     };
     let prepared: any = null;
     try {
-      const imported = await prepareImportedAsset(file, { id, assertCurrentProject, resolved, onStage });
+      const imported = await prepareImportedAsset(file, { id, assertCurrentProject, resolved, onStage, hostDeadline });
       prepared = imported.prepared;
       const { fingerprint, storageKey, sourcePath, persisted } = imported;
       if (!persisted) throw new Error('Could not store the replacement media · the original file is unchanged');

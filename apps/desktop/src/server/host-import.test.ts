@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -36,7 +36,8 @@ async function layout() {
   await writeFile(path.join(outside, 'serve-token'), 'token');
   return { dir, root, uploads, outside };
 }
-const staging = async (uploads: string) => (await readdir(uploads, { recursive: true }).catch(() => [])).filter(name => !/^host-imports$/.test(String(name)));
+/** Staged imports (host-imports/<host process>/<import>/…), leaving out the per-process folders themselves. */
+const staging = async (uploads: string) => (await readdir(uploads, { recursive: true }).catch(() => [])).filter(name => String(name).split(path.sep).length > 2);
 
 describe('resolveImportPath', () => {
   it('accepts a media file inside a root', async () => {
@@ -77,7 +78,7 @@ describe('HostImports', () => {
     const imports = new HostImports(uploads, [root]);
     const staged = await imports.stage(new EventEmitter(), path.join(root, 'clip.mp4'), undefined);
     expect(staged).toMatchObject({ name: 'clip.mp4', size: 21, type: 'video/mp4' });
-    expect(path.relative(uploads, staged.path).split(path.sep)).toHaveLength(3);
+    expect(path.relative(uploads, staged.path).split(path.sep)).toHaveLength(4);
     expect(await readFile(staged.path, 'utf8')).toBe('synthetic video bytes');
     expect(await readFile(path.join(root, 'clip.mp4'), 'utf8')).toBe('synthetic video bytes');
   });
@@ -151,12 +152,22 @@ describe('HostImports', () => {
     expect(owner.listenerCount('destroyed')).toBe(1);
   });
 
-  it('removes copies an earlier run left behind', async () => {
+  it('removes staging only of hosts that are gone, never of a host still running', async () => {
     const { root, uploads } = await layout();
-    await mkdir(path.join(uploads, 'host-imports', 'left-over'), { recursive: true });
-    await writeFile(path.join(uploads, 'host-imports', 'left-over', 'clip.mp4'), 'stale');
+    // A host on this profile that is still running, and one whose process has exited.
+    const running = new HostImports(uploads, [root]);
+    const live = await running.stage(new EventEmitter(), path.join(root, 'clip.mp4'), undefined);
+    const exited = spawnSync(process.execPath, ['-e', '']).pid;
+    await mkdir(path.join(uploads, 'host-imports', `${exited}-0`, 'import'), { recursive: true });
+    await writeFile(path.join(uploads, 'host-imports', `${exited}-0`, 'import', 'clip.mp4'), 'stale');
     await writeFile(path.join(uploads, 'someone-elses-upload'), 'keep');
+
     await new HostImports(uploads, [root]).reclaim();
-    expect(await readdir(uploads, { recursive: true })).toEqual(['someone-elses-upload']);
+
+    await expect(readFile(live.path, 'utf8')).resolves.toBe('synthetic video bytes');
+    await expect(readdir(path.join(uploads, 'host-imports', `${exited}-0`))).rejects.toThrow();
+    await expect(readFile(path.join(uploads, 'someone-elses-upload'), 'utf8')).resolves.toBe('keep');
+    await running.dispose();
+    await expect(readFile(live.path)).rejects.toThrow();
   });
 });

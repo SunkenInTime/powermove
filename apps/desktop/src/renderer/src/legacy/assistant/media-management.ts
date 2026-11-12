@@ -86,9 +86,10 @@ export async function importMedia(PM: PMRegistry, args: Record<string, unknown>,
       const existing = Object.values<any>(project.assets || {}).find(item => item.fingerprint === fingerprint && PM.assets.get(item.id) && item.persisted);
       if (existing) return { status: 'already_imported', assetId: existing.id, persisted: true };
     }
+    // This import is done only when a browser host holds its bytes, within the import's own deadline.
     const result = replace
-      ? await PM.assets.replace(assetId, file, { assertCurrent })
-      : (await PM.assets.add(file, { assertCurrent, requirePersisted: true, newAsset: true })).importResult;
+      ? await PM.assets.replace(assetId, file, { assertCurrent, hostDeadline: deadline })
+      : (await PM.assets.add(file, { assertCurrent, requirePersisted: true, newAsset: true, hostDeadline: deadline })).importResult;
     const id = result.asset.id;
     if (!result.persisted || !PM.assets.get(id) || !project.assets?.[id]) throw new Error('Media import was not verified in durable storage and the live registry.');
     if (!replace && args.folderId) project.assets[id].folder = args.folderId;

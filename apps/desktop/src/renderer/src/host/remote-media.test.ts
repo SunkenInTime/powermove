@@ -126,6 +126,9 @@ function stagingHost(...failures: string[]) {
 }
 
 describe('import by host path', () => {
+  // What the agent's import passes with each store: the host must hold the bytes by then.
+  const agentStore = (seconds = 60) => ({ storageKey: KEY, hostDeadline: Date.now() + seconds * 1000 });
+
   it('reads the staged copy and files it under its key without uploading it back', async () => {
     const fetch = respond(200);
     const { host, calls, channels } = stagingHost();
@@ -136,7 +139,7 @@ describe('import by host path', () => {
     expect(file).toMatchObject({ name: 'footage.mp4', type: 'video/mp4', size: 3, lastModified: 5 });
 
     // put resolves only once the host has filed the copy.
-    await attachRemoteMedia(host, emptyCache()).put(KEY, file, { storageKey: KEY });
+    await attachRemoteMedia(host, emptyCache()).put(KEY, file, agentStore());
     expect(calls.at(-1)).toEqual([WEB.mediaCommit, { key: KEY, path: '/host/Remote Uploads/stage-1/footage.mp4', type: 'video/mp4' }]);
     expect(channels()).not.toContain(WEB.uploadBegin);
   });
@@ -148,8 +151,7 @@ describe('import by host path', () => {
     // A playback proxy stored under the original's key is new bytes the host has not seen.
     const proxy = new Blob(['webm'], { type: 'video/webm' });
 
-    await attachRemoteMedia(host, emptyCache()).put(KEY, proxy, { storageKey: KEY });
-    await vi.waitFor(() => expect(channels()).toContain(WEB.mediaCommit));
+    await attachRemoteMedia(host, emptyCache()).put(KEY, proxy, agentStore());
 
     expect(channels()).toEqual([WEB.mediaImportPath, WEB.mediaHas, WEB.uploadBegin, WEB.uploadChunk, WEB.uploadFinish, WEB.mediaCommit]);
   });
@@ -160,8 +162,8 @@ describe('import by host path', () => {
     const { host } = stagingHost(WEB.mediaCommit, WEB.uploadChunk);
     const file = await readHostFile(host, '/home/me/footage.mp4');
 
-    await expect(attachRemoteMedia(host, emptyCache()).put(KEY, file, { storageKey: KEY }))
-      .rejects.toThrow('The host could not store footage.mp4');
+    await expect(attachRemoteMedia(host, emptyCache()).put(KEY, file, agentStore()))
+      .rejects.toThrow('The host could not store the media');
   });
 
   it('fails the store when the importer saved a converted file the host did not get', async () => {
@@ -171,8 +173,57 @@ describe('import by host path', () => {
     await readHostFile(host, '/home/me/footage.mp4');
     const proxy = new Blob(['webm'], { type: 'video/webm' });
 
-    await expect(attachRemoteMedia(host, emptyCache()).put(KEY, proxy, { storageKey: KEY }))
-      .rejects.toThrow('The host could not store footage.mp4');
+    await expect(attachRemoteMedia(host, emptyCache()).put(KEY, proxy, agentStore()))
+      .rejects.toThrow('The host could not store');
+  });
+
+  it('gives up on a connected host that stops answering, once the import\'s deadline passes', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    respond(200);
+    const { host } = stagingHost();
+    await readHostFile(host, '/home/me/footage.mp4');
+    vi.useFakeTimers();
+    // The socket stays open; nothing comes back.
+    const silent: MediaLink = { invoke: vi.fn(() => new Promise(() => {})) as MediaLink['invoke'] };
+    const store = attachRemoteMedia(silent, emptyCache());
+    const proxy = new Blob(['webm'], { type: 'video/webm' });
+
+    const settled = vi.fn();
+    const stored = store.put(KEY, proxy, agentStore(30));
+    stored.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    expect(settled).toHaveBeenCalled();
+    await expect(stored).rejects.toThrow('The host did not confirm it stored the media within 30 s');
+  });
+
+  it('releases without waiting on a host that stops answering', async () => {
+    respond(200);
+    const { host } = stagingHost();
+    const file = await readHostFile(host, '/home/me/footage.mp4');
+    const silent: MediaLink = { invoke: vi.fn(() => new Promise(() => {})) as MediaLink['invoke'] };
+
+    const settled = vi.fn();
+    releaseHostFile(silent, file).then(settled, settled);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(settled).toHaveBeenCalled();
+    expect(silent.invoke).toHaveBeenCalledWith(WEB.mediaImportRelease, 'stage-1');
+  });
+
+  it('leaves a drop of the same media alone while an agent imports it', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    respond(200);
+    const { host } = stagingHost(WEB.uploadChunk);
+    const agentFile = await readHostFile(host, '/home/me/footage.mp4');
+    const store = attachRemoteMedia(host, emptyCache());
+    const dropped = new File(['abc'], 'footage.mp4', { type: 'video/mp4' });
+
+    // A drop stores in the background exactly as before, even under the agent's key and with a failing upload.
+    await expect(store.put(KEY, dropped, { storageKey: KEY })).resolves.toBe(true);
+    // The agent's own store still waits, and fails.
+    await expect(store.put(KEY, new Blob(['webm']), agentStore())).rejects.toThrow('The host could not store');
+    await releaseHostFile(host, agentFile);
   });
 
   it('keeps ordinary imports in the background, as before', async () => {

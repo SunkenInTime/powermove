@@ -21,7 +21,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { constants, createWriteStream } from 'node:fs';
-import { mkdir, open, readlink, realpath, rm, stat, type FileHandle } from 'node:fs/promises';
+import { mkdir, open, readdir, readlink, realpath, rm, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -35,7 +35,8 @@ const IMPORTABLE = new Set<string>([
   ...NATIVE_IMAGE_EXTENSIONS, ...CONVERTED_IMAGE_EXTENSIONS, ...NATIVE_VIDEO_EXTENSIONS, ...CONVERTED_VIDEO_EXTENSIONS,
   ...AUDIO_EXTENSIONS, 'obj', 'glb', 'gltf', 'cube'
 ]);
-/** Staged copies live here, under the uploads root that WEB.mediaCommit accepts. Nothing in it outlives a host run. */
+/** Staged copies live here, under the uploads root that WEB.mediaCommit accepts. Each host process
+    stages in its own folder, named for its pid, and only ever clears that folder. */
 const STAGING = 'host-imports';
 /** Long enough for an import to read and file its copy; an id unused by then is gone. */
 const STAGED_LIFETIME_MS = 5 * 60_000;
@@ -117,6 +118,12 @@ async function copyBounded(source: FileHandle, target: string, limit: number, to
   return copied;
 }
 
+/** Whether a process exists. A process this user may not signal (EPERM) still exists. */
+function running(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
+}
+
 interface Entry { path: string; owner: Owner; served: boolean; drop(): void }
 
 export class HostImports {
@@ -124,16 +131,28 @@ export class HostImports {
   private readonly working = new Set<Promise<unknown>>();
   private readonly maxBytes: number;
   private readonly lifetime: number;
+  /** This host's own staging folder. Another host on the same profile has its own. */
+  private readonly root: string;
 
   constructor(private readonly uploadsRoot: string, private readonly roots: readonly string[], options: { maxBytes?: number; ttlMs?: number } = {}) {
     this.maxBytes = options.maxBytes ?? AGENT_MEDIA_MAX_BYTES;
     this.lifetime = options.ttlMs ?? STAGED_LIFETIME_MS;
+    this.root = path.join(uploadsRoot, STAGING, `${process.pid}-${randomUUID()}`);
   }
 
-  private get root(): string { return path.join(this.uploadsRoot, STAGING); }
-
-  /** Removes copies a previous host run left behind; nothing records them across runs. */
-  async reclaim(): Promise<void> { await rm(this.root, { recursive: true, force: true }); }
+  /**
+   * Removes staging left by host processes that have exited. A folder whose
+   * process still runs, or whose owner cannot be told, is left alone: a second
+   * host starting on this profile must not touch the first one's imports.
+   */
+  async reclaim(): Promise<void> {
+    const parent = path.join(this.uploadsRoot, STAGING);
+    const folders = await readdir(parent).catch(() => [] as string[]);
+    await Promise.all(folders.map(async (folder) => {
+      const pid = Number(/^(\d+)-/.exec(folder)?.[1]);
+      if (Number.isSafeInteger(pid) && pid > 0 && !running(pid)) await rm(path.join(parent, folder), { recursive: true, force: true });
+    }));
+  }
 
   /**
    * Copies the file into staging. The copy is removed when it is committed,
@@ -207,5 +226,6 @@ export class HostImports {
   async dispose(): Promise<void> {
     await Promise.allSettled([...this.working]);
     await Promise.all([...this.staged.keys()].map(id => this.forget(id)));
+    await rm(this.root, { recursive: true, force: true });
   }
 }
