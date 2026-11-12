@@ -2,6 +2,10 @@
    renderer both read these lists so a format is never accepted by the file
    picker but rejected by the importer, or vice versa. */
 
+/** The most an agent may import or replace from a file path. The renderer asks
+    for it and the browser host enforces it, whatever the client asks for. */
+export const AGENT_MEDIA_MAX_BYTES = 512 * 1024 * 1024;
+
 export function mediaExtension(name: unknown): string {
   const match = /\.([a-z0-9]+)$/i.exec(String(name || ''));
   return match ? match[1]!.toLowerCase() : '';

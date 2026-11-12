@@ -803,6 +803,10 @@ export interface PowermoveBridge {
     finishPreview(token: string): Promise<{ token: string; size: number }>;
     cloudStatus(paths: string[]): Promise<Record<string, CloudFileState>>;
     openLocalSource(path: string): Promise<{ token: string; size: number } | null>;
+    /** Browser host only: a file on the host's own disk, for imports by path. Errors say why a path is refused. */
+    readHostFile?(path: string, maxBytes?: number): Promise<File>;
+    /** Browser host only: drop the host's copy behind a readHostFile File once its import is over. */
+    releaseHostFile?(file: File): Promise<void>;
     cloudPrompt(names: string[]): Promise<{ download: boolean; automatic: boolean }>;
     downloadCloudSource(path: string): Promise<{ token: string; size: number }>;
     readCloudSource(token: string, offset: number, length: number): Promise<Uint8Array>;

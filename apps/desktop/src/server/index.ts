@@ -13,6 +13,7 @@ import { createServer as createHttpServer, type IncomingMessage, type ServerResp
 import { createServer as createHttpsServer } from 'node:https';
 import { createReadStream } from 'node:fs';
 import { copyFile, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile, type FileHandle } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Duplex } from 'node:stream';
@@ -48,6 +49,7 @@ import { ensureCertificate } from './tls';
 import { ProjectSessions } from './sessions';
 import { RunHub, RunOwner } from './runs';
 import { FontStore } from './fonts';
+import { HostImports } from './host-import';
 import { UpdateChecker, type InstallKind } from './updates';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { BrowserWindow, IpcMain, WebContents } from 'electron';
@@ -85,6 +87,8 @@ export interface ServeOptions {
   managedPrefix?: string;
   log?: (line: string) => void;
   externalMcp?: CodexIpcContext['externalMcp'];
+  /** Folders a tab may import media from by host path (agents' import_media). Default: the home directory. */
+  importRoots?: string[];
 }
 
 export interface RunningServer {
@@ -554,6 +558,17 @@ export async function serve(options: ServeOptions): Promise<RunningServer> {
     await writeFile(`${target}.type`, type);
     return true;
   });
+  /* media on the host's own disk, imported by path (see host-import.ts) */
+  const hostImports = new HostImports(uploadsRoot.blob, options.importRoots ?? [homedir()]);
+  await hostImports.reclaim();
+  ipc.handle(WEB.mediaImportPath, async (event, payload) => {
+    const client = trustedClient(event);
+    if (!isRecord(payload)) throw new Error('media: expected { path, maxBytes }');
+    const staged = await hostImports.stage(client, payload.path, payload.maxBytes);
+    log(`[serve] client ${client.id}: staged ${staged.name} (${(staged.size / 1048576).toFixed(1)} MB) for import`);
+    return staged;
+  });
+  ipc.handle(WEB.mediaImportRelease, async (event, id) => { await hostImports.release(trustedClient(event), id); });
   ipc.handle(WEB.mediaHas, async (event, keys) => {
     trustedClient(event);
     if (!Array.isArray(keys)) return [];
@@ -621,6 +636,15 @@ export async function serve(options: ServeOptions): Promise<RunningServer> {
         try { info = await stat(file); } catch { text(response, 404, 'Not found'); return; }
         const type = await readFile(`${file}.type`, 'utf8').catch(() => 'application/octet-stream');
         response.writeHead(200, headers(type.trim(), { 'Content-Length': String(info.size), 'Cache-Control': 'private, max-age=31536000, immutable' }));
+        createReadStream(file).pipe(response);
+        return;
+      }
+      if (pathname === '/__powermove/media-import') {
+        const file = hostImports.file(url.searchParams.get('id') ?? '');
+        let info;
+        try { info = file ? await stat(file) : null; } catch { info = null; }
+        if (!file || !info?.isFile()) { text(response, 404, 'Not found'); return; }
+        response.writeHead(200, headers('application/octet-stream', { 'Content-Length': String(info.size), 'Cache-Control': 'no-store' }));
         createReadStream(file).pipe(response);
         return;
       }
@@ -737,6 +761,7 @@ export async function serve(options: ServeOptions): Promise<RunningServer> {
       app.emit('will-quit');
       await mediaProxies.dispose();
       await mediaPaths.dispose();
+      await hostImports.dispose();
       await sessions.flush();
       await store.flushAll();
     }
