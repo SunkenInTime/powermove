@@ -649,7 +649,7 @@ export async function serve(options: ServeOptions): Promise<RunningServer> {
   const server = options.insecure
     ? createHttpServer(handler)
     : createHttpsServer(await ensureCertificate(userData), handler);
-  const sockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
+  const sockets = new WebSocketServer({ noServer: true, maxPayload: 512 * 1024 * 1024 });
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
     if (url.pathname !== WS_PATH || !authorized(request)) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
