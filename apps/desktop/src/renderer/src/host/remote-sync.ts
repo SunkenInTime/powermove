@@ -8,8 +8,8 @@
  * down and are applied with replaceProject, which does not record history,
  * so each device keeps its own undo stack. Joining a project hands the host
  * our copy; it answers with its own when the two differ, and the host's wins.
- * Until that answer is applied the editor takes no edits (editor-hold.ts):
- * anything changed in between would be replaced by it.
+ * Until that answer is applied the document takes no writes (editor-hold.ts):
+ * anything written in between would be replaced by it.
  */
 import { applyPatch, diffPatches, type Patch } from '../../../shared/patch';
 import { isDisconnectError } from '../../../shared/reconnect';

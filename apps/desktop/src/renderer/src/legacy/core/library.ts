@@ -36,6 +36,9 @@ const ensureLibrary: any = (project: any = PM.proj) => {
 };
 const lib: any = () => ensureLibrary(PM.proj);
 
+/** Library writes to the open project are refused while it is held, like any edit (PM.hist.assertEditable). */
+const assertEditable = (project: any = PM.proj) => { if (project?.id === PM.proj?.id) PM.hist?.assertEditable?.(); };
+
 function projectMeta(project: any) {
   return PM.Projects?.list?.().find((m: any) => m.id === project.id) || null;
 }
@@ -129,6 +132,7 @@ function saveVersion(id: any, ids: any, options: any = {}) {
   const found: any = resolveSection(id, options.sourceProjectId);
   if (!found) return null;
   const { entry: s, project }: any = found;
+  assertEditable(project);
   const layers: any = PM.proj.layers.filter((l: any) => !ids || ids.includes(l.id));
   if (!layers.length) { PM.toast('Nothing to save — no layers'); return null; }
   const at: any = Date.now(), preview: any = thumb(), snapshot: any = clone(layers);
@@ -151,6 +155,7 @@ function saveVersion(id: any, ids: any, options: any = {}) {
 
 /** Save a shader layer's code + uniform values as a Look. */
 function saveLook(name: any, L: any) {
+  assertEditable();
   L = L || PM.firstSel();
   if (!L || L.type !== 'shader') { PM.toast('Select a shader layer to save a look'); return null; }
   const uniforms: any = {};
@@ -236,6 +241,7 @@ function usage(id: any, sourceProjectId: any = PM.proj.id) {
 function renameSection(id: any, name: any, sourceProjectId: any) {
   const found: any = resolveSection(id, sourceProjectId);
   if (!found) return false;
+  assertEditable(found.project);
   found.entry.name = String(name || '').trim() || found.entry.name;
   found.entry.at = Date.now(); persistLibraryProject(found.project); return true;
 }
@@ -243,6 +249,7 @@ function duplicateSection(id: any, sourceProjectId: any, targetProjectId: any = 
   const found: any = resolveSection(id, sourceProjectId); if (!found) return null;
   const target: any = targetProjectId === PM.proj.id ? PM.proj : PM.Projects?.get?.(targetProjectId);
   if (!target) return null;
+  assertEditable(target);
   const copyEntry: any = clone(found.entry);
   copyEntry.id = PM.uid('S'); copyEntry.name += ' copy'; copyEntry.at = Date.now(); copyEntry.deletedAt = null;
   copyEntry.sourceProjectId = target.id; copyEntry.sourceProjectName = target.name;
@@ -296,7 +303,7 @@ function drop(kind: any, id: any) {
   if (kind === 'sections') { trashSection(id, PM.proj.id); PM.toast('Moved to Library Trash'); return; }
   if (kind === 'looks') {
     const found: any = resolveLook(id, PM.proj.id);
-    if (found) { found.entry.deletedAt = Date.now(); persistLibraryProject(found.project); PM.toast('Moved to Library Trash'); }
+    if (found) { assertEditable(found.project); found.entry.deletedAt = Date.now(); persistLibraryProject(found.project); PM.toast('Moved to Library Trash'); }
     return;
   }
   const list: any = lib()[kind];
@@ -308,15 +315,18 @@ function drop(kind: any, id: any) {
 }
 function renameLook(id: any, name: any, sourceProjectId: any) {
   const found: any = resolveLook(id, sourceProjectId); if (!found) return false;
+  assertEditable(found.project);
   found.entry.name = String(name || '').trim() || found.entry.name;
   found.entry.at = Date.now(); persistLibraryProject(found.project); return true;
 }
 function trashLook(id: any, sourceProjectId: any) {
   const found: any = resolveLook(id, sourceProjectId); if (!found) return false;
+  assertEditable(found.project);
   found.entry.deletedAt = Date.now(); persistLibraryProject(found.project); return true;
 }
 function restoreLook(id: any, sourceProjectId: any) {
   const found: any = resolveLook(id, sourceProjectId); if (!found) return false;
+  assertEditable(found.project);
   found.entry.deletedAt = null; found.entry.at = Date.now(); persistLibraryProject(found.project); return true;
 }
 
@@ -324,6 +334,7 @@ function restoreLook(id: any, sourceProjectId: any) {
 function comment(kind: any, id: any, text: any) {
   const e: any = lib()[kind].find((x: any) => x.id === id);
   if (!e || !text || !text.trim()) return null;
+  assertEditable();
   (e.comments = e.comments || []).push({ at: Date.now(), text: text.trim() });
   PM.bus.emit('library');
   return e.comments;

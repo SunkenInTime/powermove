@@ -1407,10 +1407,13 @@ async function prepareImportedAsset(file: any, { id, assertCurrentProject, resol
   return { prepared, kind, fingerprint, storageKey, sourcePath, persisted };
 }
 async function ingestAsset(file: any, { silent = false, layerDefinition, onStage, assertCurrent, requirePersisted = false, newAsset = false, hostDeadline }: any = {}) {
+  // Refused before any bytes are stored, and again before metadata is published.
+  PM.hist?.assertEditable?.();
   const targetProject = PM.proj;
   const targetEpoch = assetEpoch;
   const assertCurrentProject = () => {
     assertCurrent?.();
+    PM.hist?.assertEditable?.();
     if (PM.proj !== targetProject || assetEpoch !== targetEpoch) {
       const error = new Error('Import stopped because you switched projects · import the file again in the intended project');
       (error as any).code = 'STALE_MEDIA_IMPORT';
@@ -1555,6 +1558,7 @@ PM.assets = {
     return results;
   },
   async replace(id: any, file: any, { onStage, assertCurrent, hostDeadline }: any = {}) {
+    PM.hist?.assertEditable?.();
     const targetProject = PM.proj;
     const targetProjectId = targetProject?.id;
     const targetEpoch = assetEpoch;
@@ -1573,6 +1577,7 @@ PM.assets = {
     }
     const assertCurrentProject = () => {
       assertCurrent?.();
+      PM.hist?.assertEditable?.();
       if (PM.proj !== targetProject || assetEpoch !== targetEpoch || PM.proj?.assets?.[id] !== currentMeta) {
         const error = new Error('Replacement stopped because you switched projects · replace the file again in the intended project');
         (error as any).code = 'STALE_MEDIA_REPLACEMENT';

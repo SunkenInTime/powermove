@@ -39,7 +39,10 @@ describe('legacy history install', () => {
     expect(PM.proj.value).toBe(2);
     expect(refused).toHaveBeenCalledTimes(4);
     expect(PM.hist.commit('Drag')).toBe(false);
+    expect(() => PM.hist.assertEditable()).toThrow('Connecting');
+    expect(refused).toHaveBeenCalledTimes(5);
     release();
+    expect(() => PM.hist.assertEditable()).not.toThrow();
     PM.hist.do('Second', () => { PM.proj.value = 4; });
     expect(PM.hist.undo()).toBe(true);
     expect(PM.proj.value).toBe(2);

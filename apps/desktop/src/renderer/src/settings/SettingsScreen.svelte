@@ -158,6 +158,7 @@
 
   function toggleMemory(): void {
     if (!PM.proj) return;
+    try { PM.hist?.assertEditable?.(); } catch { return; }
     memoryOn = !memoryOn;
     /* A project setting, not a video edit: it takes no revision or Undo step. */
     if (memoryOn) delete PM.proj.memoryEnabled; else PM.proj.memoryEnabled = false;

@@ -261,7 +261,8 @@ export function install(PM: PMRegistry): void {
      * Holds the document: until the returned release runs, every edit that
      * would start (begin, do, Edit.apply/mutate, undo, redo) throws `reason`
      * and changes nothing. An edit already open is rolled back first, so the
-     * document is exactly what it was before it began.
+     * document is exactly what it was before it began. Writes that persist
+     * without history (see assertEditable) are refused the same way.
      */
     hold(reason: string, onRefused?: () => void) {
       if (pending) H.rollback();
@@ -269,6 +270,12 @@ export function install(PM: PMRegistry): void {
       held = mine;
       return () => { if (held === mine) held = null; };
     },
+    /**
+     * For writes that persist without an undo step (project rename, notes,
+     * project memory, media import, library looks): throws the hold's reason,
+     * before anything is written, while the document is held.
+     */
+    assertEditable() { refuseWhileHeld(); },
     canUndo: () => idx >= 0,
     canRedo: () => idx < stack.length - 1,
     label: () => idx >= 0 ? stack[idx]!.label : null,

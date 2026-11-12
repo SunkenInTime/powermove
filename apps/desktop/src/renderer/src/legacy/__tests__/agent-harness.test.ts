@@ -176,6 +176,23 @@ describe('agent harness oracle', () => {
     expect(JSON.parse((await call('get_project_state', {})).content[0].text).memory.constraints).toHaveLength(1);
   });
 
+  it('refuses project memory while the document is held, before writing or saving it', async () => {
+    const PM = harnessEditor();
+    PM.autosave = vi.fn();
+    const call = () => PM.AgentHarness.test.handleLiveAgentTool({
+      runId: 'held', callId: 'held', tool: 'project_memory', arguments: { operation: 'add', kind: 'goal', text: 'Held goal' }, baseRevision: 0
+    });
+    // What a browser tab does while the host has not answered its join.
+    const release = PM.hist.hold('Connecting to the host…');
+    const before = JSON.stringify(PM.proj);
+    await expect(call()).rejects.toThrow('Connecting to the host…');
+    expect(JSON.stringify(PM.proj)).toBe(before);
+    expect(PM.autosave).not.toHaveBeenCalled();
+    release();
+    await call();
+    expect(PM.proj.memory).toEqual([expect.objectContaining({ kind: 'goal', text: 'Held goal' })]);
+  });
+
   it('observes source without capturing frames unless the agent requests times', async () => {
     const PM = harnessEditor();
     const snapshot = vi.fn(PM.Export.snapshot);

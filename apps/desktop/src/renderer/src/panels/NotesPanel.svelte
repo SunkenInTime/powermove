@@ -72,7 +72,10 @@
   }
 
   function handleInput(event: Event): void {
-    notes = (event.currentTarget as HTMLTextAreaElement).value;
+    const field = event.currentTarget as HTMLTextAreaElement;
+    // While the document is held, typing does not happen: the notes stay as saved.
+    try { PM.hist?.assertEditable?.(); } catch { field.value = notes; return; }
+    notes = field.value;
     scheduleSave();
   }
 

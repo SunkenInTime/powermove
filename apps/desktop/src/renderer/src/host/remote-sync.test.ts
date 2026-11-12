@@ -163,19 +163,29 @@ describe('remote sync holds the editor until the host answers the join', () => {
     expect(sent).toEqual([[{ path: ['name'], exists: true, value: 'After reconnect' }]]);
   });
 
-  it('holds input too, for edits that do not go through history', async () => {
+  it('leaves alone everything that does not write the document', async () => {
     const { answer } = openingTab({ id: 'project', name: 'Film', layers: [] });
+    // A panel tab, a search field and the keyboard, as Effect Controls and the effects search use them.
+    const tab = document.createElement('button');
+    const search = document.createElement('input');
+    document.body.append(tab, search);
     const reached: string[] = [];
-    const note = (event: Event) => reached.push(event.type);
-    for (const type of ['pointerdown', 'keydown', 'paste', 'wheel']) window.addEventListener(type, note);
+    tab.addEventListener('click', () => reached.push('tab'));
+    search.addEventListener('input', () => reached.push(`search:${search.value}`));
+    const key = (event: Event) => reached.push(`key:${(event as KeyboardEvent).key}:${event.defaultPrevented}`);
+    window.addEventListener('keydown', key);
     try {
-      for (const type of ['pointerdown', 'keydown', 'paste', 'wheel']) document.body.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
-      expect(reached).toEqual(['wheel']);
+      tab.click();
+      search.focus();
+      search.value = 'blur';
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', ctrlKey: true, bubbles: true, cancelable: true }));
+      expect(reached).toEqual(['tab', 'search:blur', 'key:r:false']);
+      expect(document.activeElement).toBe(search);
       await answer(null);
-      document.body.dispatchEvent(new Event('keydown', { bubbles: true, cancelable: true }));
-      expect(reached).toEqual(['wheel', 'keydown']);
     } finally {
-      for (const type of ['pointerdown', 'keydown', 'paste', 'wheel']) window.removeEventListener(type, note);
+      window.removeEventListener('keydown', key);
+      tab.remove(); search.remove();
     }
   });
 });

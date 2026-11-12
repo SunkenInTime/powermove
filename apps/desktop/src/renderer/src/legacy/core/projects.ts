@@ -137,6 +137,7 @@ R.rename = (id: any, name: any) => {
   if (!id) return null;
   const raw = R.get(id);
   const active = PM.proj && PM.proj.id === id ? PM.proj : null;
+  if (active) PM.hist?.assertEditable?.();
   const meta = R.list().find((x: any) => x.id === id);
   const previous = (active && active.name) || (raw && raw.name) || (meta && meta.name) || 'Untitled';
   const next = String(name == null ? '' : name).trim() || previous;
