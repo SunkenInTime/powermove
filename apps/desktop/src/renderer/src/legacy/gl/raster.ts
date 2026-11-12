@@ -1060,6 +1060,10 @@ async function resolveAssetKind(file: any) {
 PM.resolveAssetKind = resolveAssetKind;
 const disposedAssets = new WeakSet<object>();
 const historyAssetRetains = new WeakMap<object, number>();
+/* Media a restore published that a later restore kept instead of reading
+   again. It now belongs to the later pass: the earlier one, when it goes
+   stale, must neither unpublish nor dispose it. */
+const adoptedAssets = new WeakSet<object>();
 function disposeAsset(a: any) {
   if (!a) return;
   if (typeof a === 'object') {
@@ -1737,6 +1741,7 @@ PM.assets = {
       // A tab brought back keeps what it had loaded; only the rest is read.
       const kept = PM.assets.map.get(meta.id);
       if (kept) {
+        adoptedAssets.add(kept);
         loading.delete(String(meta.id));
         return { asset: kept, meta, kept: true };
       }
@@ -1800,7 +1805,7 @@ PM.assets = {
     });
     if (epoch !== assetEpoch || PM.proj !== project) {
       results.forEach((result: any) => {
-        if (!result.asset || result.kept) return;
+        if (!result.asset || result.kept || adoptedAssets.has(result.asset)) return;
         if (cache.get(result.asset.id) === result.asset) cache.delete(result.asset.id);
         disposeAsset(result.asset);
       });
