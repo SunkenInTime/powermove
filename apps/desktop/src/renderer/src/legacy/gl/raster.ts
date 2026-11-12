@@ -33,7 +33,7 @@ import { parseSvg,svgImportRepair } from '../core/svg-import';
 import { isStreamedMedia } from '../../host/streamed-media';
 import { forgetVideo, trackVideo } from '../core/video-residency';
 import { inspectorService, viewerService } from '../core/services';
-import { capturePoster } from '../core/poster';
+import { capturePoster, hasPoster } from '../core/poster';
 import { bridge as hostBridge } from '../../kernel/bridge';
 
 const posterUrls = new Map<string, string>();
@@ -1734,7 +1734,10 @@ PM.assets = {
     const restored: any[] = [], missing: any[] = [];
     const loading = new Set(metas.map(meta => String(meta.id)));
     PM.assets.loading = loading;
-    PM.bus?.emit?.('assets');
+    // Reading stored media makes it usable without changing the project, so
+    // these notifications must not autosave. Recovering an asset from its
+    // source file rewrites its metadata and is saved like any other change.
+    PM.bus?.emit?.('assets', { runtimeOnly: true });
     const results = await PM.MediaImport.mapBounded(metas, 3, async (meta: any) => {
       const current = () => epoch === assetEpoch && PM.proj === project && project.assets?.[meta.id] === meta;
       if (!current()) return { stale: true };
@@ -1748,8 +1751,11 @@ PM.assets = {
       PM.assets.errors.delete(meta.id);
       let posterBlob: any = null;
       let cacheError: unknown;
+      let recovered = false;
       try {
-        const posterKey = meta.storageKey
+        // Asking for a poster that cannot exist costs a full retry cycle
+        // against a remote host before the asset is usable.
+        const posterKey = meta.storageKey && hasPoster(meta.kind)
           ? PM.MediaImport.posterKeyFor(meta.storageKey)
           : null;
         // Footage plays from its library file; reading it into a Blob kept a
@@ -1781,6 +1787,7 @@ PM.assets = {
         if (!current()) return { stale: true };
         if (file) {
           await recoverSourceAsset(meta, file, current);
+          recovered = true;
           if (!current()) return { stale: true };
           return { asset: PM.assets.get(meta.id), meta, posterBlob };
         }
@@ -1794,7 +1801,7 @@ PM.assets = {
       finally {
         loading.delete(String(meta.id));
         if (epoch === assetEpoch && PM.proj === project) {
-          PM.bus?.emit?.('assets');
+          PM.bus?.emit?.('assets', { runtimeOnly: !recovered });
           PM.invalidate?.('render');
         }
       }

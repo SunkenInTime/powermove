@@ -46,9 +46,12 @@ function seekVideo(video: HTMLVideoElement, time: number, timeout = 2000): Promi
   });
 }
 
+/** Only images and videos get a poster; no other kind ever stores one. */
+export const hasPoster = (kind: unknown) => kind === 'image' || kind === 'video';
+
 export async function capturePoster(asset: any, { maxEdge = 320 }: { maxEdge?: number } = {}): Promise<Blob | null> {
   try {
-    if (!asset || (asset.kind !== 'image' && asset.kind !== 'video')) return null;
+    if (!asset || !hasPoster(asset.kind)) return null;
     // A released decoder (video-residency) starts reloading here.
     const el: any = asset.kind === 'video' ? useVideo(asset.el) : asset.el;
     if (!el) return null;
