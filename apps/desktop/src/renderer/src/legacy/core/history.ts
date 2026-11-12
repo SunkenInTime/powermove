@@ -52,6 +52,13 @@ export function install(PM: PMRegistry): void {
   let stack: Entry[] = [];
   let idx = -1;
   let pending: any = null;
+  /** While set, the document takes no edits (see H.hold). */
+  let held: { reason: string; onRefused?: () => void } | null = null;
+  const refuseWhileHeld = () => {
+    if (!held) return;
+    held.onRefused?.();
+    throw new Error(held.reason);
+  };
   let depth = 0;
   let totalBytes = 0;
   const preparedHistories = new WeakMap<object, { saved: any; bytes: number[]; records: HistoryRecords }>();
@@ -140,11 +147,13 @@ export function install(PM: PMRegistry): void {
 
   const H: any = {
     begin(label: any, group: any = null, origin: any = 'interface') {
+      refuseWhileHeld();
       if (depth++ > 0) return pending?.before || null;
       pending = { label, before: snap(), group, origin };
       return pending.before;
     },
     beginScoped(label: any, group: any = null, origin: any = 'interface') {
+      refuseWhileHeld();
       if (depth++ > 0) return false;
       pending = { label, group, origin, scoped: true, scopes: new Map() };
       return true;
@@ -231,6 +240,7 @@ export function install(PM: PMRegistry): void {
       finally { if (pending) H.commit(label); }
     },
     undo() {
+      refuseWhileHeld();
       if (idx < 0) return false;
       const entry = stack[idx--]!;
       entry.undo();
@@ -239,12 +249,25 @@ export function install(PM: PMRegistry): void {
       return true;
     },
     redo() {
+      refuseWhileHeld();
       if (idx >= stack.length - 1) return false;
       const entry = stack[++idx]!;
       entry.redo();
       publishProjectPatch(entry.forward && realize(entry.forward), 'interface');
       publish();
       return true;
+    },
+    /**
+     * Holds the document: until the returned release runs, every edit that
+     * would start (begin, do, Edit.apply/mutate, undo, redo) throws `reason`
+     * and changes nothing. An edit already open is rolled back first, so the
+     * document is exactly what it was before it began.
+     */
+    hold(reason: string, onRefused?: () => void) {
+      if (pending) H.rollback();
+      const mine = { reason, onRefused };
+      held = mine;
+      return () => { if (held === mine) held = null; };
     },
     canUndo: () => idx >= 0,
     canRedo: () => idx < stack.length - 1,
