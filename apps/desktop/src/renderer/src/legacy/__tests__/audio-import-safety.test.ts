@@ -11,6 +11,39 @@ function deferred<T>() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('audio import project safety oracle', () => {
+  it('refuses an import while the document is held, storing nothing and adding nothing', async () => {
+    vi.stubGlobal('window', {
+      document: { createElement: () => ({ getContext: () => ({}) }) },
+      navigator: { hardwareConcurrency: 4 },
+      URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
+      setTimeout, clearTimeout,
+    });
+    const project = { id: 'A', assets: {}, layers: [] };
+    const PM = makePM('core/history', 'gl/raster');
+    PM.proj = project;
+    PM.uid = () => 'asset-new';
+    PM.Audio = { accepts: () => true, prepareAsset: async () => ({ id: 'asset-new', name: 'held.mp3', kind: 'audio' }), disposeAsset() {}, rebalanceCache() {} };
+    const put = vi.fn(async () => true);
+    PM.MediaStore = { put };
+    PM.MediaImport = {
+      fingerprint: async () => 'fingerprint',
+      storageKeyFor: (value: string) => `media:${value}`,
+      match: () => ({ canonicalId: null, aliases: [] }),
+      coalesce: () => 0,
+      mapBounded: async (items: unknown[], _limit: number, worker: (item: unknown) => unknown) => Promise.all(items.map(worker)),
+    };
+    PM.touch = () => {};
+    // The extension API's assets.add is PM.assets.add; agent media imports use it too.
+    const release = PM.hist.hold('Connecting to the host…');
+    await expect(PM.assets.add({ name: 'held.mp3', type: 'audio/mpeg', size: 10 })).rejects.toThrow('Connecting to the host…');
+    expect(put).not.toHaveBeenCalled();
+    expect(project.assets).toEqual({});
+    expect(PM.assets.map.size).toBe(0);
+    release();
+    await PM.assets.add({ name: 'held.mp3', type: 'audio/mpeg', size: 10 });
+    expect(Object.keys(project.assets)).toEqual(['asset-new']);
+  });
+
   it('discards a slow decode if its originating project is no longer active', async () => {
     vi.stubGlobal('window', {
       document: { createElement: () => ({ getContext: () => ({}) }) },

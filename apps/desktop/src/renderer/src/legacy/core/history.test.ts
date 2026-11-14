@@ -24,6 +24,29 @@ function historyRegistry(): PMRegistry {
 }
 
 describe('legacy history install', () => {
+  it('takes no edit while held, rolls back one left open, and takes edits again once released', () => {
+    const PM = historyRegistry();
+    PM.hist.do('First', () => { PM.proj.value = 2; });
+    PM.hist.begin('Drag');
+    PM.proj.value = 3;
+    const refused = vi.fn();
+    const release = PM.hist.hold('Connecting', refused);
+    expect(PM.proj.value).toBe(2);
+    expect(() => PM.hist.do('Second', () => { PM.proj.value = 4; })).toThrow('Connecting');
+    expect(() => PM.hist.beginScoped('Scoped')).toThrow('Connecting');
+    expect(() => PM.hist.undo()).toThrow('Connecting');
+    expect(() => PM.hist.redo()).toThrow('Connecting');
+    expect(PM.proj.value).toBe(2);
+    expect(refused).toHaveBeenCalledTimes(4);
+    expect(PM.hist.commit('Drag')).toBe(false);
+    expect(() => PM.hist.assertEditable()).toThrow('Connecting');
+    expect(refused).toHaveBeenCalledTimes(5);
+    release();
+    expect(() => PM.hist.assertEditable()).not.toThrow();
+    PM.hist.do('Second', () => { PM.proj.value = 4; });
+    expect(PM.hist.undo()).toBe(true);
+    expect(PM.proj.value).toBe(2);
+  });
   it('retains the complete undo and redo chain under memory pressure', () => {
     const previous = (globalThis as any).window;
     (globalThis as any).window = { addEventListener: vi.fn() };

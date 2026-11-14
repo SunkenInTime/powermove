@@ -8,9 +8,13 @@
  * down and are applied with replaceProject, which does not record history,
  * so each device keeps its own undo stack. Joining a project hands the host
  * our copy; it answers with its own when the two differ, and the host's wins.
+ * Until that answer is applied the document takes no writes (editor-hold.ts):
+ * anything written in between would be replaced by it.
  */
 import { applyPatch, diffPatches, type Patch } from '../../../shared/patch';
+import { isDisconnectError } from '../../../shared/reconnect';
 import { WEB } from '../../../shared/wire';
+import { HOLD_MESSAGE, holdEditor, type EditorHold, type HoldRegistry } from './editor-hold';
 
 export interface SyncLink {
   invoke<T = unknown>(channel: string, ...args: unknown[]): Promise<T>;
@@ -22,7 +26,7 @@ const SYNC_DEBOUNCE_MS = 250;
 
 interface RemotePatch { projectId: string; seq: number; patches: Patch[]; from: number }
 
-type Registry = {
+type Registry = HoldRegistry & {
   proj?: { id?: string; assets?: Record<string, { id: string }> } & Record<string, unknown>;
   assets?: { get(id: string): unknown };
   restoreProjectAssets?(project: unknown, warn?: boolean): Promise<unknown>;
@@ -30,7 +34,6 @@ type Registry = {
   bus: { on(event: string, listener: (...args: any[]) => void): () => void; emit(event: string, ...args: unknown[]): void };
   replaceProject(next: unknown, options?: { selection?: unknown }): unknown;
   isHomeProject?(): boolean;
-  toast?(text: string, ms?: number, options?: { error?: boolean }): void;
 };
 
 export function attachRemoteSync(link: SyncLink, PM: Registry): () => void {
@@ -42,6 +45,10 @@ export function attachRemoteSync(link: SyncLink, PM: Registry): () => void {
   let synced = '';
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let sending: Promise<void> = Promise.resolve();
+  let held: EditorHold | null = null;
+  /** A join after a reconnect says so at once; the first one only if it takes a while. */
+  const hold = (): void => { if (held) held.say(HOLD_MESSAGE); else held = holdEditor(PM); };
+  const unhold = (): void => { held?.release(); held = null; };
 
   const current = (): string | null => (PM.isHomeProject?.() ? null : PM.proj?.id ?? null);
   const snapshot = (): string => { try { return JSON.stringify(PM.proj ?? null); } catch { return ''; } };
@@ -88,6 +95,8 @@ export function attachRemoteSync(link: SyncLink, PM: Registry): () => void {
     if (joined) link.send(WEB.syncLeave, joined);
     joined = projectId;
     seq = 0;
+    // Before the copy we bring is taken: holding rolls back an edit still open.
+    hold();
     synced = snapshot();
     const doc = PM.proj;
     joining = link.invoke<{ seq: number; doc: unknown | null }>(WEB.syncJoin, { projectId, doc })
@@ -95,10 +104,16 @@ export function attachRemoteSync(link: SyncLink, PM: Registry): () => void {
         if (joined !== projectId || current() !== projectId) return;
         seq = result.seq;
         if (result.doc != null) applyRemote(result.doc, PM.sel);
+        unhold();
       })
       .catch((error) => {
+        if (joined !== projectId) return;
         console.warn('[remote-sync] join failed', error);
-        PM.toast?.('This tab is not synced with the host. Reload to retry.', 6000);
+        // Still held either way: nothing edited now could reach the host. A
+        // dropped connection has its own notice and joins again on reconnect;
+        // anything else needs a reload.
+        held?.say(null);
+        if (!isDisconnectError(error)) PM.toast?.('This tab is not synced with the host. Reload to retry.', 0, { error: true });
       })
       .finally(() => { joining = null; schedule(); });
   };
@@ -107,6 +122,7 @@ export function attachRemoteSync(link: SyncLink, PM: Registry): () => void {
     const projectId = current();
     if (!projectId) {
       if (joined) { link.send(WEB.syncLeave, joined); joined = null; }
+      unhold();
       return;
     }
     join(projectId);
@@ -144,5 +160,6 @@ export function attachRemoteSync(link: SyncLink, PM: Registry): () => void {
     if (flushTimer) clearTimeout(flushTimer);
     if (joined) link.send(WEB.syncLeave, joined);
     joined = null;
+    unhold();
   };
 }

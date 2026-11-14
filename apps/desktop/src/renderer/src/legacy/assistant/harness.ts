@@ -662,6 +662,7 @@ async function handleLiveAgentTool(request: AgentToolRequestEvent): Promise<Omit
       return { ok: true, content: [toolText({ memory: listMemory(PM.proj.memory, { kind: args.kind, limit: args.limit }), total: (PM.proj.memory || []).length })], revision: currentRevision() };
     }
     if (!['add', 'update', 'remove'].includes(args.operation)) throw new Error('operation must be list, add, update or remove.');
+    PM.hist?.assertEditable?.();
     const result = applyMemoryOperation(PM.proj.memory || [], args as MemoryOperation, { now: Date.now(), uid: () => PM.uid('mem'), author: 'agent' });
     // Notes are not video edits: no revision bump, no Undo entry, no conflict with the run's baseline.
     PM.proj.memory = result.entries;
