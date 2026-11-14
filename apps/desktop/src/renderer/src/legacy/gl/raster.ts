@@ -78,6 +78,8 @@ export function videoImportFailureMessage(fileName: unknown, failure: unknown): 
     : "This file's codec is not supported by this build · transcode it to H.264, HEVC, VP9, or AV1 and import it again";
 }
 
+/* How much longer than the deadline a video that has not started playing may take, and how often it is rechecked. */
+const VIDEO_FRAME_PROBE_PATIENCE = 8, VIDEO_FRAME_PROBE_STEP = 250;
 export function waitForPresentedVideoFrame(el: any, timeout = 1800): Promise<boolean> {
   if (typeof el.requestVideoFrameCallback !== 'function') return Promise.resolve(true);
   return new Promise(resolve => {
@@ -94,7 +96,22 @@ export function waitForPresentedVideoFrame(el: any, timeout = 1800): Promise<boo
       resolve(presented);
     };
     callback = el.requestVideoFrameCallback(() => finish(true));
-    const timer = window.setTimeout(() => finish(false), timeout);
+    /* The deadline catches a source whose clock runs while Chromium decodes
+       none of its video (ProRes in a MOV). A tab busy restoring several large
+       videos misses the same deadline with a video that is fine: frames it has
+       decoded prove it plays, and one whose clock has not started is still
+       loading, so it is given longer before it counts as unplayable. */
+    const startedAt = Number(el.currentTime) || 0;
+    const decoded = () => Number(el.getVideoPlaybackQuality?.().totalVideoFrames ?? el.webkitDecodedFrameCount ?? 0);
+    let waited = timeout;
+    const check = () => {
+      if (decoded() > 0) return finish(true);
+      const clockRunning = (Number(el.currentTime) || 0) > startedAt;
+      if (clockRunning || waited >= timeout * VIDEO_FRAME_PROBE_PATIENCE) return finish(false);
+      waited += VIDEO_FRAME_PROBE_STEP;
+      timer = window.setTimeout(check, VIDEO_FRAME_PROBE_STEP);
+    };
+    let timer = window.setTimeout(check, timeout);
     try {
       Promise.resolve(el.play()).catch(() => finish(false));
     } catch (e) { finish(false); }
