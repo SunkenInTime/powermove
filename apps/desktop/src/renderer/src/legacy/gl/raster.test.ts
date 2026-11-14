@@ -280,15 +280,57 @@ describe('legacy raster install', () => {
     expect(playable.pause).toHaveBeenCalledOnce();
 
     const audioOnly = {
+      currentTime: 0,
       requestVideoFrameCallback: vi.fn(() => 9),
       cancelVideoFrameCallback: vi.fn(),
+      getVideoPlaybackQuality: () => ({ totalVideoFrames: 0 }),
       play: vi.fn().mockResolvedValue(undefined),
       pause: vi.fn(),
     };
     const failure = waitForPresentedVideoFrame(audioOnly, 1000);
+    audioOnly.currentTime = 0.9;
     await vi.advanceTimersByTimeAsync(1000);
     await expect(failure).resolves.toBe(false);
     expect(audioOnly.cancelVideoFrameCallback).toHaveBeenCalledWith(9);
+  });
+
+  it('does not call a video unplayable because a busy tab missed the frame deadline', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { setTimeout, clearTimeout });
+    const video = (frames: number) => ({
+      currentTime: 0,
+      frames,
+      requestVideoFrameCallback: vi.fn(() => 4),
+      cancelVideoFrameCallback: vi.fn(),
+      getVideoPlaybackQuality() { return { totalVideoFrames: this.frames }; },
+      play: vi.fn().mockResolvedValue(undefined),
+      pause: vi.fn(),
+    });
+
+    // Decoded, never presented: playable.
+    const busy = video(26);
+    const decoded = waitForPresentedVideoFrame(busy, 1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(decoded).resolves.toBe(true);
+    expect(busy.cancelVideoFrameCallback).toHaveBeenCalledWith(4);
+
+    // Not started at the deadline, decodes a little later: playable.
+    const late = video(0);
+    let settled: boolean | undefined;
+    const slow = waitForPresentedVideoFrame(late, 1000).then(value => (settled = value));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(settled).toBeUndefined();
+    late.frames = 3;
+    await vi.advanceTimersByTimeAsync(250);
+    await expect(slow).resolves.toBe(true);
+
+    // Never starts: unplayable once the patience runs out.
+    let verdict: boolean | undefined;
+    const dead = waitForPresentedVideoFrame(video(0), 1000).then(value => (verdict = value));
+    await vi.advanceTimersByTimeAsync(7999);
+    expect(verdict).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(dead).resolves.toBe(false);
   });
 
   it('keeps padded raster textures and tight text selection bounds', () => {
