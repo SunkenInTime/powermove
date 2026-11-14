@@ -308,9 +308,11 @@ describe('legacy raster install', () => {
     });
 
     // Decoded, never presented: playable.
-    const decoded = waitForPresentedVideoFrame(video(26), 1000);
+    const busy = video(26);
+    const decoded = waitForPresentedVideoFrame(busy, 1000);
     await vi.advanceTimersByTimeAsync(1000);
     await expect(decoded).resolves.toBe(true);
+    expect(busy.cancelVideoFrameCallback).toHaveBeenCalledWith(4);
 
     // Not started at the deadline, decodes a little later: playable.
     const late = video(0);
@@ -323,8 +325,11 @@ describe('legacy raster install', () => {
     await expect(slow).resolves.toBe(true);
 
     // Never starts: unplayable once the patience runs out.
-    const dead = waitForPresentedVideoFrame(video(0), 1000);
-    await vi.advanceTimersByTimeAsync(8000);
+    let verdict: boolean | undefined;
+    const dead = waitForPresentedVideoFrame(video(0), 1000).then(value => (verdict = value));
+    await vi.advanceTimersByTimeAsync(7999);
+    expect(verdict).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
     await expect(dead).resolves.toBe(false);
   });
 

@@ -89,13 +89,13 @@ export function waitForPresentedVideoFrame(el: any, timeout = 1800): Promise<boo
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
-      if (!presented && callback && typeof el.cancelVideoFrameCallback === 'function') {
+      if (callback && typeof el.cancelVideoFrameCallback === 'function') {
         try { el.cancelVideoFrameCallback(callback); } catch (e) { }
       }
       try { el.pause(); } catch (e) { }
       resolve(presented);
     };
-    callback = el.requestVideoFrameCallback(() => finish(true));
+    callback = el.requestVideoFrameCallback(() => { callback = 0; finish(true); });
     /* The deadline catches a source whose clock runs while Chromium decodes
        none of its video (ProRes in a MOV). A tab busy restoring several large
        videos misses the same deadline with a video that is fine: frames it has
